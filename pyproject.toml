@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bank-model-server"
+version = "0.1.0"
+description = "Bank Model Service API Server"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+    "jinja2>=3.1.2",
+    "werkzeug>=3.0.1",
+    "flask>=3.0.0",  # Keep for potential compatibility if needed
+    "pydantic>=2.5.0",
+    "numpy>=1.26.0",
+    "gdal==3.6.2 ; sys_platform != 'win32'",
+    "gdal ; sys_platform == 'win32'",
+    "pyproj>=3.6.0",
+    "pillow>=10.0.0",
+    "portalocker>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/bank-model-server"
+Repository = "https://github.com/yourusername/bank-model-server.git"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[[tool.uv.index]]
+name = "geospatial_wheels"
+url = "https://nathanjmcdougall.github.io/geospatial-wheels-index/"
+explicit = true
+
+[tool.uv.sources]
+gdal = [
+  { index = "geospatial_wheels", marker = "sys_platform == 'win32'" },
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "model", "util"]

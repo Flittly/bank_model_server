@@ -1,8 +1,8 @@
-# Bank Model Service (v0.07)
+# Bank Model Service (v0.08)
 
-**Bank Model Service (BMS)** is a model service application for **Collapse-Bank Monitoring and Warning**. `BMS` utilizes a layered design structure. From top to bottom, it consists of the following layers: 
+**Bank Model Service (BMS)** is a model service application for **Collapse-Bank Monitoring and Warning**. `BMS` utilizes a layered design structure. From top to bottom, it consists of the following layers:
 
-- **Web-server**: routes and controllers powered by python flask;
+- **Web-server**: routes and controllers powered by Python FastAPI;
 - **Model**: geospatial processing models related to collapse bank analyses;
 - **Utility**: utilities for conveniencing file handling, md5 encoding, system checking, and geospatial data processing;
 - **API-configuration**: basic configuration for BMS.
@@ -38,7 +38,7 @@ graph LR
             MCR1((MCR 1))
             MCRN((MCR...))
         end
-        
+
         subgraph CaseContent[<b>Model Case Content In Disk</b>]
             Identity[identity.json]
             Response[response.json]
@@ -58,7 +58,7 @@ graph LR
                 DEM1[DEM Resource 1]
                 DEMN[DEM Resource...]
             end
-            
+
         end
 
     API0-->Request0
@@ -95,26 +95,73 @@ graph LR
 
 The basic condition for MCR to be **EFFECTIVE** is that when the model and parameters have not changed, the results of multiple runs are **COMPLETELY CONSISTENT**.
 
-## Install server for Linux
+## Installation
 
-Trying project `BMS` requires an installation of [Conda](https://www.anaconda.com/).
+### Using uv (Recommended)
 
-- Install dependencies:
-  
-```
-    conda env create -f environment.yaml
-```
-
-- Activate environment:
-
-```
-    conda activate BMS
+1. Install [uv](https://github.com/astral-sh/uv):
+```bash
+pip install uv
 ```
 
-- Run: 
-  
+2. Install dependencies:
+```bash
+uv sync
 ```
-    python -u "run.py"
+
+3. Run:
+```bash
+uv run python run.py
+```
+
+### Using pip
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Run:
+```bash
+python run.py
+```
+
+### Using Conda (Legacy)
+
+For backward compatibility, the conda environment setup is still available:
+```bash
+conda env create -f environment.yaml
+conda activate BMS
+python -u "run.py"
+```
+
+## API Documentation
+
+FastAPI automatically generates interactive API documentation:
+
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+## Project Structure
+
+```
+bank_model_server/
+├── app/
+│   ├── __init__.py          # FastAPI app factory
+│   └── main/
+│       ├── __init__.py     # APIRouter definition
+│       ├── controllers.py  # Business logic handlers
+│       ├── routes.py       # FastAPI route definitions
+│       └── schemas.py      # Pydantic models
+├── config.py               # Application configuration
+├── run.py                  # Application entry point
+├── pyproject.toml         # Project dependencies (uv)
+├── requirements.txt        # Project dependencies (pip)
+├── environment.yaml        # Conda environment (legacy)
+├── model/                 # Model implementations
+├── modelResource/         # Model resources (NOT modified)
+├── util/                  # Utility modules
+└── case/                  # Model case storage
 ```
 
 ## Install flow-field texture builder

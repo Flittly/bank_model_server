@@ -264,17 +264,22 @@ def global_flush_func(bench_path, ref_path, output_path, default_value = -9999.0
     for row in range(start_row1, end_row1):
         for col in range(start_col1, end_col2):
             
-            if row >= height or col >= width:
+            # Use relative coordinates (r, c) for the 'array' which has size (height, width)
+            # row and col are global coordinates in the source raster
+            r = row - start_row1
+            c = col - start_col1
+            
+            if r >= height or c >= width:
                 continue
             
             val1 = data1[row][col] if row < end_row1 and col < end_col1 else default_value
             val2 = data2[row - (start_row1 - start_row2)][col - (start_col1 - start_col2)] if row >= start_row2 and row < end_row2 and col >= start_col2 and col < end_col2 else default_value
 
             if val1 == nodata1 or val2 == nodata2 or val1 == default_value or val2 == default_value:
-                array[row, col]= default_value
+                array[r, c]= default_value
             else:
                 result = val1 - val2
-                array[row, col]=result
+                array[r, c]=result
     output_dataset.GetRasterBand(1).WriteArray(array)
 
     # 设置输出数据集的NoData值
@@ -451,4 +456,3 @@ if __name__ == '__main__':
         # Run model cased (Region Flush)
         region_mcr = MCR.open_case(v2)
         run_region_flush_mcr(region_mcr)
-        

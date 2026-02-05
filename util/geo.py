@@ -1,6 +1,8 @@
 import os
 import json
-from osgeo import ogr, osr
+from osgeo import ogr, osr, gdal
+
+gdal.UseExceptions()
 
 def convert_shp_to_geojson(shp_path, geojson_path):
     
@@ -244,6 +246,10 @@ def calculate_distance(x1, y1, x2, y2, epsg_code=2437):
     source = osr.SpatialReference()
     source.ImportFromEPSG(epsg_code)
     
+    # Ensure coordinates are standard python floats, not numpy types
+    x1, y1 = float(x1), float(y1)
+    x2, y2 = float(x2), float(y2)
+
     point1 = ogr.Geometry(ogr.wkbPoint)
     point1.AddPoint(x1, y1)
 
@@ -293,4 +299,4 @@ if __name__ == '__main__':
     average_time = (end_time - start_time) / num_runs
 
     print(f"Average execution time over {num_runs} runs: {average_time:.6f} seconds", flush=True)
- 
+

@@ -306,6 +306,26 @@ def section_view(dem_path, section_geometry, output_path):
             i += 1
     Sa_v = computeSaIndex_v(sample_v_points)
     slope_foot_index = Sa_v.index(min(Sa_v)) + 1
+    
+    # helper for converting numeric to native python type
+    def to_native(obj):
+        if isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    # Convert all numpy types to python native types in sample_points_vec3
+    sample_points_vec3 = [[to_native(val) for val in point] for point in sample_points_vec3]
+    # Convert Sa list
+    Sa = [to_native(val) for val in Sa]
+    # Convert sample_v_points
+    sample_v_points = [[to_native(val) for val in point] for point in sample_v_points]
+    # Convert Sa_v list
+    Sa_v = [to_native(val) for val in Sa_v]
+    # Convert erosion points
+    points_er_verified = [[to_native(val) for val in point] for point in points_er_verified]
+    points_er = [[to_native(val) for val in point] for point in points_er]
 
     raw_res = {
         'points': sample_points_vec3,
@@ -395,4 +415,3 @@ if __name__ == '__main__':
     
     # Run section view model case
     run_section_view_mcr(section_view_mcr)
-    

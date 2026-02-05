@@ -1,7 +1,7 @@
 import os
 import weakref
 
-APP_PORT                                        =       8000
+APP_PORT                                        =       8088
 APP_DEBUG                                       =       True
 
 # API Version           

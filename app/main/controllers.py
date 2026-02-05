@@ -8,7 +8,10 @@ from util import StorageMonitor
 
 ######################################## Handler for Model Case ########################################
 
-def handle_model_case_status(case_id: str):
+def handle_model_case_status(data: dict):
+    case_id = data.get('case-id')
+    if not case_id:
+        return 400, "Missing 'case-id' in request"
     
     if not model.ModelCaseReference.has_case(case_id):
         return 404, f'Model Case ID ({case_id}) Not Found'
@@ -17,7 +20,10 @@ def handle_model_case_status(case_id: str):
         'status': model.ModelCaseReference.check_case_status(case_id)
     }
 
-def handle_model_case_error(case_id: str):
+def handle_model_case_error(data: dict):
+    case_id = data.get('case-id')
+    if not case_id:
+        return 400, "Missing 'case-id' in request"
     
     if not model.ModelCaseReference.has_case(case_id):
         return 404, f'Model Case ID ({case_id}) Not Found'
@@ -25,7 +31,10 @@ def handle_model_case_error(case_id: str):
     # return 200, model.ModelCaseReference.get_status_log(case_id)
     return 200, model.ModelCaseReference.get_simplified_error_log(case_id)
 
-def handle_pre_error_cases(case_id: str):
+def handle_pre_error_cases(data: dict):
+    case_id = data.get('case-id')
+    if not case_id:
+        return 400, "Missing 'case-id' in request"
     
     if not model.ModelCaseReference.has_case(case_id):
         return 404, f'Model Case ID ({case_id}) Not Found'
@@ -34,7 +43,10 @@ def handle_pre_error_cases(case_id: str):
         'case-list': model.ModelCaseReference.get_pre_error_cases(case_id)
     }
     
-def handle_model_case_result(case_id: str):
+def handle_model_case_result(data: dict):
+    case_id = data.get('case-id')
+    if not case_id:
+        return 400, "Missing 'case-id' in request"
     
     if not model.ModelCaseReference.has_case(case_id):
         return 404, f'Model Case ID ({case_id}) Not Found'
@@ -43,7 +55,10 @@ def handle_model_case_result(case_id: str):
         'result': model.ModelCaseReference.get_case_response(case_id)
     }
     
-def handle_model_case_delete(case_id: str):
+def handle_model_case_delete(data: dict):
+    case_id = data.get('case-id')
+    if not case_id:
+        return 400, "Missing 'case-id' in request"
     
     if not model.ModelCaseReference.delete_case(case_id): 
         return 404, f'Model Case ID ({case_id}) Not Found'

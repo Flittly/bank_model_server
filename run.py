@@ -20,6 +20,14 @@ def initialize_work_space():
     for key in config.MODEL_REGISTRY:
         launcher.preheat(key)
 
+    # Initialize Database
+    try:
+        import init_db
+        print("Checking database initialization...", flush=True)
+        init_db.init_db()
+    except Exception as e:
+        print(f"Database initialization warning: {e}", flush=True)
+
     StorageMonitor().initialize([config.DIR_ROOT], config.DIR_STORAGE_LOG)
 
 if __name__ == '__main__':

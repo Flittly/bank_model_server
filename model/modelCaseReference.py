@@ -140,295 +140,51 @@ class ModelCaseReference:
                     file.write(write_content)
             
             self.update_call_time()
-            portalocker.unlock(lock_file)
-    
-    def find_status(self, status):
-        
-        with open(self.local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
             
-            path = os.path.join(self.directory, 'status')
-            filenames = util.get_filenames(path)
-            self.status = int(filenames[0])
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
             
-            result = (self.status & status) == status
-            
-            portalocker.unlock(lock_file)
-            return result
-        
-    def is_used(self): 
-        
-        with open(self.local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-            
-            path = os.path.join(self.directory, 'status')
-            filenames = util.get_filenames(path)
-            self.status = int(filenames[0])
-            
-            is_completed = (self.status & config.STATUS_COMPLETE) == config.STATUS_COMPLETE
-            is_error = (self.status & config.STATUS_ERROR) == config.STATUS_ERROR
-            is_locked = (self.status & config.STATUS_LOCK) == config.STATUS_LOCK
-            
-            result = is_completed or is_error or is_locked
-            portalocker.unlock(lock_file)
-            return result
-    
-    def make_response(self, content=None):
-        
-        current_status = self.get_status()
-        response_file_path = os.path.join(self.directory, 'response.json')
-        
-        with open(self.local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-        
-            if content is not None: 
-                    
-                content['case-id'] = self.id
-                content['model'] = self.model_name
-            
-                with open(response_file_path, 'w', encoding = 'utf-8') as file:
-                    json.dump(content, file, indent = 4)
-                self.update_call_time()
-
-                portalocker.unlock(lock_file)
-                return content
-            
-            else:
-                with open(response_file_path, 'r', encoding='utf-8') as file:
-                    content = json.load(file)
-                
-                portalocker.unlock(lock_file)
-                return content
-    
-    def result_packaging(self):
-        
-        with open(self.local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-        
-            result_path = os.path.join(self.directory, 'result')
-            zip_file = os.path.join(self.directory, 'result')
-            
-            util.create_zip_from_folder(result_path, zip_file)
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
             
             self.update_call_time()
+            
+            self.save_to_database()
+
             portalocker.unlock(lock_file)
         
-        return zip_file + '.zip'
-    
-    @staticmethod
-    def generate_pre_error_log(current_case_id, pre_case_ids: list[str]):
+    def get_status(self):
         
-        error_log = ''
-        for case_id in pre_case_ids:
-            error_log += f'{case_id}-'
-        error_log = error_log[:-1]
-        
-        error_log += f'\n\n========= Error before Model Case ({ModelCaseReference.get_model_name(current_case_id)}: {current_case_id}) =========\n\n'
-        
-        for case_id in pre_case_ids:
-            
-            error_log += f'Pre Model Case ({ModelCaseReference.get_model_name(case_id)}: {case_id}) ERROR\n\n'
-            error_log += (ModelCaseReference.get_status_log(case_id) + '\n')
-        
-        return error_log
-    
-    @staticmethod
-    def get_simplified_error_log(case_id: str):
-        
-        id_set = set()
-        id_stack = util.Stack()
-        
-        # Initialize error-id stack
-        for id in ModelCaseReference.get_case_dependencies(case_id):
-            if ModelCaseReference.has_case(id) and ModelCaseReference.is_case_error(id):
-                id_stack.push(id)
-        
-        # Stack recursion
-        while not id_stack.is_empty():
-            
-            error_id = id_stack.pop()
-            id_set.add(error_id)
-            
-            for id in ModelCaseReference.get_case_dependencies(error_id):
-                if ModelCaseReference.has_case(id) and ModelCaseReference.is_case_error(id):
-                    id_stack.push(id)
-        
-        error_log = ''
-        for id in id_set:
-            
-            error_log += f'=== Error Happened When Model Case ({ModelCaseReference.get_model_name(id)}: {id}) Running ===\n{ModelCaseReference.get_status_log(id)}\n'
-
-        return error_log
-    
-    @staticmethod
-    def get_model_name(case_id: str):
-        
-        with open(os.path.join(config.DIR_MODEL_CASE, case_id, 'identity.json'), 'r', encoding='utf-8') as file:
-            model_name = json.load(file)['model']
-        return model_name
-    
-    @staticmethod
-    def get_case_dependencies(case_id: str):
-        
-        with open(os.path.join(config.DIR_MODEL_CASE, case_id, 'identity.json'), 'r', encoding='utf-8') as file:
-            dependencies = json.load(file)['dependencies']
-        return dependencies
-    
-    @staticmethod
-    def has_case(case_id: str):
-        
-        if os.path.exists(os.path.join(config.DIR_MODEL_CASE, case_id)): 
-            return True
-        return False
-        
-    @staticmethod
-    def open_case(case_id: str):
-        
-        directory = os.path.join(config.DIR_MODEL_CASE, case_id)
-        if not os.path.exists(directory):
-            return None
-        
-        with open(os.path.join(directory, 'identity.json'), "r") as file:
-            content = json.load(file)
-
-        model_name = content['model']
-        request_url = content['url']
-        request_json = content['json']
-        model_path = content['model-path']
-        dependencies = content['dependencies']
-
-        return ModelCaseReference.create(request_url, request_json, model_name, model_path, dependencies)
-    
-    @staticmethod
-    def delete_case(case_id: str):
-        
-        with open(config.DIR_GLOBALE_FILE_LOCKER, 'w') as lock_file:
+        with open(self.local_file_locker, 'w') as lock_file:
             portalocker.lock(lock_file, portalocker.LOCK_EX)
             
-            directory = os.path.join(config.DIR_MODEL_CASE, case_id)
-            util.update_size(config.DIR_STORAGE_LOG, -util.get_folder_size_in_gb(directory))
-            
-            if not os.path.exists(directory):
-                portalocker.unlock(lock_file)
-                return False
-            
-            util.delete_folder_contents(directory)
-            portalocker.unlock(lock_file)
-            return True
-    
-    @staticmethod
-    def is_case_locked(case_id: str):
-
-        path = os.path.join(config.DIR_MODEL_CASE, case_id, 'status')
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        if not os.path.exists(path):
-            return None
-
-        with open(local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-            
+            path = os.path.join(self.directory, 'status')
             filenames = util.get_filenames(path)
-            status_code = int(filenames[0])
-
+            self.status = int(filenames[0])
             portalocker.unlock(lock_file)
-
-        if (status_code & config.STATUS_LOCK) == config.STATUS_LOCK:
-            return True
-        return False
+            return self.status
     
-    @staticmethod
-    def get_case_time(case_id: str):
-
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
             portalocker.lock(lock_file, portalocker.LOCK_EX)
             
-            time = int(util.get_filenames(os.path.join(config.DIR_MODEL_CASE, case_id, 'time'))[0])
-
-            portalocker.unlock(lock_file)
-        
-        return time
-    
-    @staticmethod
-    def get_case_status(case_id: str):
-
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
             
-            current_status = int(util.get_filenames(os.path.join(config.DIR_MODEL_CASE, case_id, 'status'))[0])
-            
-            portalocker.unlock(lock_file)
-        
-        return current_status
-
-    @staticmethod
-    def check_case_status(case_id: str):
-
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-            
-            current_status = int(util.get_filenames(os.path.join(config.DIR_MODEL_CASE, case_id, 'status'))[0])
-            
-            portalocker.unlock(lock_file)
-        
-        if (current_status & config.STATUS_COMPLETE) == config.STATUS_COMPLETE:
-            return 'COMPLETE'
-        if (current_status & config.STATUS_RUNNING) == config.STATUS_RUNNING:
-            return 'RUNNING'
-        if (current_status & config.STATUS_ERROR) == config.STATUS_ERROR:
-            return 'ERROR'
-        if (current_status & config.STATUS_NONE) == config.STATUS_NONE:
-            return 'NONE'
-        if (current_status & config.STATUS_UNLOCK) == config.STATUS_UNLOCK:
-            return 'UNLOCK'
-        if (current_status & config.STATUS_LOCK) == config.STATUS_LOCK:
-            return 'LOCK'
-    
-    @staticmethod
-    def get_case_response(case_id: str):
-
-        response_file_path = os.path.join(config.DIR_MODEL_CASE, case_id, 'response.json')
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-            
-            with open(response_file_path, 'r', encoding='utf-8') as file:
-                content = json.load(file)
-            
-            portalocker.unlock(lock_file)
-        
-        return content
-    
-    @staticmethod
-    def get_status_log(case_id: str):
-        
-        if not os.path.exists(os.path.join(config.DIR_MODEL_CASE, case_id, 'status')):
-            return None
-        
-        status_code = util.get_filenames(os.path.join(config.DIR_MODEL_CASE, case_id, 'status'))[0]
-        with open(os.path.join(config.DIR_MODEL_CASE, case_id, 'status', status_code), 'r', encoding='utf-8') as file:
-            content = file.read()
-        return content
-    
-    @staticmethod
-    def update_case_status(case_id: str, new_status_code: int, content=None, mode = 'a'):
-        
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
-            portalocker.lock(lock_file, portalocker.LOCK_EX)
-            
-            case_status_directory = os.path.join(config.DIR_MODEL_CASE, case_id, 'status')
-            status_code = util.get_filenames(case_status_directory)[0]
-        
-            if new_status_code == status_code:
+            if self.status == status:
+                portalocker.unlock(lock_file)
                 return
             
-            old_name = os.path.join(case_status_directory, f'{status_code}')
-            new_name = os.path.join(case_status_directory, f'{new_status_code}')
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
             
-            util.rename_file(old_name, new_name, f'CHANGE MCR ({ModelCaseReference.get_model_name(case_id)}: {case_id}) status to {new_status_code}')
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
             
             if not content == None:
                 
@@ -438,54 +194,1261 @@ class ModelCaseReference:
                 with open(new_name, mode, encoding='utf-8') as file:
                     file.write(write_content)
             
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
             portalocker.unlock(lock_file)
     
-    @staticmethod
-    def get_pre_error_cases(case_id: str):
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
         
-        id_set = { case_id }
-        id_stack = util.Stack()
-        
-        # Initialize error-id stack
-        for case_id in get_error_case_ids_in_log(case_id):
-            if ModelCaseReference.has_case(case_id):
-                id_stack.push(case_id)
-        
-        # Stack recursion
-        while not id_stack.is_empty():
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
             
-            error_id = id_stack.pop()
-            id_set.add(error_id)
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
             
-            for case_id in get_error_case_ids_in_log(error_id):
-                if ModelCaseReference.has_case(case_id):
-                    id_stack.push(case_id)
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
 
-        return list(id_set)
-        
-    @staticmethod
-    def is_case_error(case_id: str):
-        
-        case_status_directory = os.path.join(config.DIR_MODEL_CASE, case_id, 'status')
-        current_status = int(util.get_filenames(case_status_directory)[0])
-    
-        is_error = (current_status & config.STATUS_ERROR) == config.STATUS_ERROR
-        
-        return is_error
-    
-    
-    @staticmethod
-    def is_case_done(case_id: str):
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
 
-        local_file_locker = os.path.join(config.DIR_MODEL_CASE, case_id, 'lock')
-        with open(local_file_locker, 'w') as lock_file:
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
             portalocker.lock(lock_file, portalocker.LOCK_EX)
             
-            current_status = int(util.get_filenames(os.path.join(config.DIR_MODEL_CASE, case_id, 'status'))[0])
-            is_completed = (current_status & config.STATUS_COMPLETE) == config.STATUS_COMPLETE
-            is_error = (current_status & config.STATUS_ERROR) == config.STATUS_ERROR
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
             
             portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
         
-        return is_completed or is_error
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
 
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")
+
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            self.save_to_database()
+
+            portalocker.unlock(lock_file)
+        
+    def get_status(self):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            portalocker.unlock(lock_file)
+            return self.status
+    
+    def update_status(self, status, content=None, mode = 'a'):
+        
+        with open(self.local_file_locker, 'w') as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            
+            path = os.path.join(self.directory, 'status')
+            filenames = util.get_filenames(path)
+            self.status = int(filenames[0])
+            
+            if self.status == status:
+                portalocker.unlock(lock_file)
+                return
+            
+            old_name = os.path.join(self.directory, 'status', f'{self.status}')
+            new_name = os.path.join(self.directory, 'status', f'{status}')
+            self.status = status
+            
+            util.rename_file(old_name, new_name, f'CHANGE MCR ({self.model_name}: {self.id}) status to {status}')
+            
+            if not content == None:
+                
+                write_content = ''
+                write_content += (f'{content}' + '\n')
+                
+                with open(new_name, mode, encoding='utf-8') as file:
+                    file.write(write_content)
+            
+            self.update_call_time()
+            
+            with open(os.path.join(self.directory, 'status', f'{config.STATUS_UNLOCK}'), 'w', encoding = 'utf-8') as file:
+                file.write('OK')
+            
+            with open(os.path.join(self.directory, 'response.json'), 'w', encoding = 'utf-8') as file:
+                json.dump({
+                    'model': self.model_name,
+                    'case-id': self.id,
+                }, file, indent = 4)
+            
+            self.update_call_time()
+            
+            # Save results to PostGIS database
+            self.save_to_database()
+            
+            portalocker.unlock(lock_file)
+    
+    def save_to_database(self):
+        """
+        Parses the model results and saves them into the PostGIS database.
+        
+        Currently supports: Risk Level model.
+        Reads 'result/risk_level.json' (or similar) and inserts into 'bank_risk_results' table.
+        """
+        try:
+            import psycopg2
+            
+            # 1. 检查是否为风险等级计算模型 (Risk Level)
+            if 'risk-level' not in self.request_url:
+                return
+
+            # 2. 这里的 result_json_path 是一个假设
+            # 实际情况中，你需要告诉风险等级模型输出一个 summary.json 或者你解析现有的文件
+            # 假设风险等级模型输出的结果里有一个 final_summary.json
+            result_json_path = os.path.join(self.directory, 'result', 'final_summary.json') 
+            
+            # 如果没有找到特定的结果文件，可能直接从内存或者 response.json 读取
+            # 这里为了演示，假设从 request_json 获取几何，从 result 获取分值
+            risk_level = 0
+            indicators = {}
+            if os.path.exists(result_json_path):
+                with open(result_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    risk_level = data.get('risk_level', 0)
+                    indicators = data.get('indicators', {})
+
+            # 3. 提取关键元数据 (Region, Segment Index)
+            # 从请求参数中获取 segment (如 Mzs)
+            region_code = self.request_json.get('segment', 'Unknown')
+            # 从 section-geometry 中获取 index (如 6)
+            geo_props = self.request_json.get('section-geometry', {}).get('properties', {})
+            seg_idx = geo_props.get('index', 0)
+            
+            # 4. 构建标准命名 (Mzs_Seg006_202304_Risk)
+            time_point = self.request_json.get('current-timepoint', '20000101').replace('-', '')
+            segment_name = f"{region_code}_Seg{seg_idx:03d}_{time_point}_Risk"
+
+            # 5. 连接数据库
+            conn = psycopg2.connect(
+                host=config.DB_HOST,
+                port=config.DB_PORT,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                dbname=config.DB_NAME
+            )
+            cursor = conn.cursor()
+            
+            # 6. 准备几何数据 (GeoJSON -> PostGIS Geometry)
+            geom_json_str = json.dumps(self.request_json['section-geometry']['geometry'])
+
+            # 7. 执行插入
+            insert_sql = """
+            INSERT INTO bank_risk_results 
+            (case_id, region_code, segment_index, segment_name, risk_level, indicators, geom)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+            ON CONFLICT (case_id) DO UPDATE 
+            SET risk_level = EXCLUDED.risk_level, 
+                indicators = EXCLUDED.indicators,
+                run_time = CURRENT_TIMESTAMP;
+            """
+            
+            cursor.execute(insert_sql, (
+                self.id,
+                region_code,
+                seg_idx,
+                segment_name,
+                risk_level,
+                json.dumps(indicators),
+                geom_json_str
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"Successfully saved case {self.id} to database.")
+            
+        except Exception as e:
+            print(f"Failed to save to database: {e}")

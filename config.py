@@ -59,12 +59,17 @@ API_MI_NEARSHORE_FLUSH                          =       API_VERSION + '/mi/nears
 API_MI_FLOW_EQUIVALENT                          =       API_VERSION + '/mi/flow-equivalent'
 API_MI_SOIL_COMPOSITION                         =       API_VERSION + '/mi/soil-composition'
 API_MI_SLOPE_PROTECTION                         =       API_VERSION + '/mi/slope-protection'
-API_MI_HEIGHT_DIFFERENCE                        =       API_VERSION + '/mi/height-difference'
 API_MI_ANTI_IMPACT_SPEED                        =       API_VERSION + '/mi/anti-impact-speed'
+API_MI_HEIGHT_DIFFERENCE                        =       API_VERSION + '/mi/height-difference'
 API_MI_WATER_LEVEL_FLUCTUATION                  =       API_VERSION + '/mi/water-level-fluctuation'
-
-#API for Erosion Model          
 API_EM_BSTEM                                    =       API_VERSION + '/em/bstem'
+
+# Database Configuration
+DB_HOST = "localhost"
+DB_PORT = "5432"
+DB_NAME = "bank_risk_db"
+DB_USER = "postgres"
+DB_PASSWORD = "123456"  # Please change this to your actual password
 
 # Status Flag           
 STATUS_UNLOCK                                   =       0b1

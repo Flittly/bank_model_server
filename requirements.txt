@@ -20,6 +20,7 @@ numpy>=1.26.0
 # Geographic spatial processing
 gdal==3.6.2
 pyproj>=3.6.0
+psycopg2-binary>=2.9.9
 
 # Image processing
 pillow>=10.0.0

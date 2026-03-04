@@ -31,6 +31,7 @@ dependencies = [
     "gdal==3.6.2 ; sys_platform != 'win32'",
     "gdal ; sys_platform == 'win32'",
     "pyproj>=3.6.0",
+    "psycopg2-binary>=2.9.9",
     "pillow>=10.0.0",
     "portalocker>=2.8.0",
 ]

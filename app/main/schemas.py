@@ -85,16 +85,6 @@ class GeoJSONGeometry(BaseModel):
     coordinates: List[Any]
 
 
-class CorrectionRules(BaseModel):
-    protection_level: Optional[str] = None
-    control_level: Optional[str] = None
-    hs: Optional[float] = None
-    hc: Optional[float] = None
-    water_qs: Optional[str] = None
-    tidal_level: Optional[str] = None
-    other_params: Optional[Dict[str, Any]] = None
-
-
 class RiskThresholds(BaseModel):
     Dsed: Optional[List[float]] = None
     Zb: Optional[List[float]] = None
@@ -113,55 +103,191 @@ class Weights(BaseModel):
     wRL: Optional[List[float]] = None
 
 
-class BankSegmentCreate(BaseModel):
-    segment_id: str
-    segment_name: str
+# ========================================
+# Bank 相关 Schema
+# ========================================
+
+
+class BankCreate(BaseModel):
+    bank_id: str
+    bank_name: str
     region_code: str
     geometry: GeoJSONGeometry
-    dem_id: Optional[str] = None
-    bench_id: Optional[str] = None
-    ref_id: Optional[str] = None
-    hydro_segment: Optional[str] = None
-    hydro_year: Optional[str] = None
-    hydro_set: Optional[str] = None
-    protection_level: Optional[str] = None
-    control_level: Optional[str] = None
-    other_params: Optional[Dict[str, Any]] = None
+    bank_geometry: Optional[GeoJSONGeometry] = None
+    description: Optional[str] = None
 
 
-class BankSegmentResponse(BankSegmentCreate):
+class BankResponse(BankCreate):
     id: int
     created_at: str
     updated_at: str
 
 
-class BankSegmentsCreateRequest(BaseModel):
-    case_id: str
-    segments: List[BankSegmentCreate]
+class BanksCreateRequest(BaseModel):
+    banks: List[BankCreate]
     overwrite: bool = False
 
 
-class BankSegmentsCreateResponse(BaseModel):
+class BanksCreateResponse(BaseModel):
     success: bool
-    case_id: str
     inserted_count: int
-    segments: List[Dict[str, Any]]
+    banks: List[Dict[str, Any]]
+
+
+class BankUpdate(BaseModel):
+    bank_name: Optional[str] = None
+    region_code: Optional[str] = None
+    geometry: Optional[GeoJSONGeometry] = None
+    bank_geometry: Optional[GeoJSONGeometry] = None
+    description: Optional[str] = None
+
+
+# ========================================
+# Task 相关 Schema
+# ========================================
+
+
+class TaskCreate(BaseModel):
+    task_id: str
+    task_name: str
+    bank_ids: Optional[List[str]] = None
+    description: Optional[str] = None
+
+
+class TaskResponse(TaskCreate):
+    id: int
+    status: Optional[str] = None
+    run_started_at: Optional[str] = None
+    run_completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class TaskStatusUpdate(BaseModel):
+    status: str
+    run_started_at: Optional[str] = None
+    run_completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class TasksCreateRequest(BaseModel):
+    tasks: List[TaskCreate]
+    overwrite: bool = False
+
+
+class TasksCreateResponse(BaseModel):
+    success: bool
+    inserted_count: int
+    tasks: List[Dict[str, Any]]
+
+
+# ========================================
+# Basic Params 相关 Schema
+# ========================================
+
+
+class BasicParamCreate(BaseModel):
+    param_id: str
+    param_name: str
+
+    # 基础参数
+    segment: Optional[str] = None
+    current_timepoint: Optional[str] = None
+    set_name: Optional[str] = None
+    water_qs: Optional[str] = None
+    tidal_level: Optional[str] = None
+
+    # DEM参数
+    bench_id: Optional[str] = None
+    ref_id: Optional[str] = None
+
+    # 水深参数
+    hs: Optional[float] = None
+    hc: Optional[float] = None
+
+    # 防护控制参数
+    protection_level: Optional[str] = None
+    control_level: Optional[str] = None
+
+    # 对比时间点
+    comparison_timepoint: Optional[str] = None
+
+    # 风险阈值
+    risk_thresholds: Optional[RiskThresholds] = None
+
+    # 权重参数
+    weights: Optional[Weights] = None
+
+    # 其他参数
+    other_params: Optional[Dict[str, Any]] = None
+
+
+class BasicParamResponse(BasicParamCreate):
+    id: int
+    created_at: str
+    updated_at: str
+
+
+class BasicParamsCreateRequest(BaseModel):
+    params: List[BasicParamCreate]
+    overwrite: bool = False
+
+
+class BasicParamsCreateResponse(BaseModel):
+    success: bool
+    inserted_count: int
+    params: List[Dict[str, Any]]
+
+
+class BasicParamUpdate(BaseModel):
+    param_name: Optional[str] = None
+    segment: Optional[str] = None
+    current_timepoint: Optional[str] = None
+    set_name: Optional[str] = None
+    water_qs: Optional[str] = None
+    tidal_level: Optional[str] = None
+    bench_id: Optional[str] = None
+    ref_id: Optional[str] = None
+    hs: Optional[float] = None
+    hc: Optional[float] = None
+    protection_level: Optional[str] = None
+    control_level: Optional[str] = None
+    comparison_timepoint: Optional[str] = None
+    risk_thresholds: Optional[RiskThresholds] = None
+    weights: Optional[Weights] = None
+    other_params: Optional[Dict[str, Any]] = None
+
+
+# ========================================
+# Cross Section 相关 Schema（重构版）
+# ========================================
 
 
 class CrossSectionCreate(BaseModel):
     section_id: str
     section_name: str
-    segment_id: str
+    bank_id: str
     region_code: str
     segment_index: Optional[int] = None
     geometry: GeoJSONGeometry
+    section_geometry: Optional[GeoJSONGeometry] = None
+    distance: Optional[float] = None
+    basic_param_id: Optional[int] = None
+
+    # Section独立的参数字段
+    param_name: Optional[str] = None
+    segment: Optional[str] = None
+    current_timepoint: Optional[str] = None
+    set_name: Optional[str] = None
+    water_qs: Optional[str] = None
+    tidal_level: Optional[str] = None
+    bench_id: Optional[str] = None
+    ref_id: Optional[str] = None
     hs: Optional[float] = None
     hc: Optional[float] = None
     protection_level: Optional[str] = None
     control_level: Optional[str] = None
-    water_qs: Optional[str] = None
-    tidal_level: Optional[str] = None
-    current_timepoint: Optional[str] = None
     comparison_timepoint: Optional[str] = None
     risk_thresholds: Optional[RiskThresholds] = None
     weights: Optional[Weights] = None
@@ -170,87 +296,69 @@ class CrossSectionCreate(BaseModel):
 
 class CrossSectionResponse(CrossSectionCreate):
     id: int
+    task_id: Optional[str] = None
+    task_name: Optional[str] = None
     created_at: str
     updated_at: str
 
 
 class CrossSectionsCreateRequest(BaseModel):
-    case_id: str
+    task_id: str
     sections: List[CrossSectionCreate]
-    inherit_from_segment: bool = True
+    inherit_from_basic_param: bool = True
     overwrite: bool = False
 
 
 class CrossSectionsCreateResponse(BaseModel):
     success: bool
-    case_id: str
+    task_id: str
     inserted_count: int
     sections: List[Dict[str, Any]]
 
 
-class CorrectionLineCreate(BaseModel):
-    correction_id: str
-    geometry: GeoJSONGeometry
-    correction_rules: CorrectionRules
-    description: Optional[str] = None
+class CrossSectionUpdate(BaseModel):
+    section_name: Optional[str] = None
+    bank_id: Optional[str] = None
+    region_code: Optional[str] = None
+    segment_index: Optional[int] = None
+    geometry: Optional[GeoJSONGeometry] = None
+    section_geometry: Optional[GeoJSONGeometry] = None
+    distance: Optional[float] = None
+    basic_param_id: Optional[int] = None
+
+    # Section独立的参数字段
+    param_name: Optional[str] = None
+    segment: Optional[str] = None
+    current_timepoint: Optional[str] = None
+    set_name: Optional[str] = None
+    water_qs: Optional[str] = None
+    tidal_level: Optional[str] = None
+    bench_id: Optional[str] = None
+    ref_id: Optional[str] = None
+    hs: Optional[float] = None
+    hc: Optional[float] = None
+    protection_level: Optional[str] = None
+    control_level: Optional[str] = None
+    comparison_timepoint: Optional[str] = None
+    risk_thresholds: Optional[RiskThresholds] = None
+    weights: Optional[Weights] = None
+    other_params: Optional[Dict[str, Any]] = None
 
 
-class CorrectionLineResponse(CorrectionLineCreate):
-    id: int
-    created_at: str
-    updated_at: str
+# ========================================
+# 综合查询相关 Schema
+# ========================================
 
 
-class CorrectionLinesCreateRequest(BaseModel):
-    case_id: str
-    corrections: List[CorrectionLineCreate]
-    overwrite: bool = False
-
-
-class CorrectionLinesCreateResponse(BaseModel):
+class FullTaskDataResponse(BaseModel):
     success: bool
-    case_id: str
-    inserted_count: int
-    corrections: List[Dict[str, Any]]
-
-
-class FullCaseDataResponse(BaseModel):
-    success: bool
-    case_id: str
+    task_id: str
     data: Dict[str, Any]
 
 
-class ApplyCorrectionsResponse(BaseModel):
+class ClearTaskResponse(BaseModel):
     success: bool
-    case_id: str
-    updated_sections: int
-    applied_corrections: int
-
-
-class EffectiveSectionParamsResponse(BaseModel):
-    success: bool
-    section_id: str
-    effective_params: Dict[str, Any]
-    applied_corrections: List[Dict[str, Any]]
-
-
-class BatchImportRequest(BaseModel):
-    case_id: str
-    segments: Optional[List[BankSegmentCreate]] = None
-    sections: Optional[List[CrossSectionCreate]] = None
-    corrections: Optional[List[CorrectionLineCreate]] = None
-    overwrite: bool = False
-
-
-class BatchImportResponse(BaseModel):
-    success: bool
-    case_id: str
-    imported: Dict[str, int]
-
-
-class ClearCaseResponse(BaseModel):
-    success: bool
-    case_id: str
+    task_id: str
     deleted: Dict[str, int]
 
 
@@ -263,3 +371,26 @@ class GenericErrorResponse(BaseModel):
     success: bool
     error: str
     details: Optional[Dict[str, Any]] = None
+
+
+# ========================================
+# 风险结果相关 Schema
+# ========================================
+
+
+class BankRiskResultResponse(BaseModel):
+    id: int
+    task_id: int
+    section_id: int
+    section_name: Optional[str] = None
+    region_code: Optional[str] = None
+    bank_id: Optional[str] = None
+    run_time: str
+    risk_level: Optional[int] = None
+    indicators: Optional[Dict[str, Any]] = None
+    geometry: Optional[GeoJSONGeometry] = None
+
+
+class BankRiskResultsResponse(BaseModel):
+    success: bool
+    results: List[BankRiskResultResponse]

@@ -19,25 +19,32 @@ from .schemas import (
     CallTimeResponse,
     SerializationResponse,
     DiskUsageResponse,
-    ResourceUpload,
-    HydrodynamicListResponse,
     ErrorResponse,
     SuccessResponse,
-    BankSegmentsCreateRequest,
-    BankSegmentsCreateResponse,
+    BanksCreateRequest,
+    BanksCreateResponse,
+    BankUpdate,
+    TasksCreateRequest,
+    TasksCreateResponse,
+    TaskStatusUpdate,
+    BasicParamsCreateRequest,
+    BasicParamsCreateResponse,
+    BasicParamUpdate,
     CrossSectionsCreateRequest,
     CrossSectionsCreateResponse,
-    CorrectionLinesCreateRequest,
-    CorrectionLinesCreateResponse,
-    FullCaseDataResponse,
-    ClearCaseResponse,
+    CrossSectionUpdate,
+    FullTaskDataResponse,
+    ClearTaskResponse,
+    BankRiskResultResponse,
+    BankRiskResultsResponse,
     GenericSuccessResponse,
     GenericErrorResponse,
+    HydrodynamicListResponse,
 )
 from . import controllers
 from . import (
     api_router,
-)  # Import the existing api_router from __init__.py instead of creating a new one
+)
 
 
 # Helper function
@@ -531,92 +538,24 @@ async def get_hydrodynamic_resource_list():
     return HydrodynamicListResponse(**response)
 
 
-######################################## API for Models ########################################
+######################################## API for Bank Workflow (重构版) ########################################
 
 
-@api_router.get("/{category}/{model_name}")
-async def get_model_runner(category: str, model_name: str, request: Request):
-    api_path = f"{config.API_VERSION}/{category}/{model_name}"
-
-    # Check if the API request is handled by a specific controller handler
-    if api_path in controllers.api_handlers:
-        request_json = dict(request.query_params)
-        status, response = controllers.api_handlers[api_path](request_json)
-        if status == 200:
-            return response
-        raise HTTPException(status_code=500, detail=str(response))
-
-    query_params = dict(request.query_params)
-    status, response = controllers.handle_model_runner(api_path, query_params)
-    if status == 200:
-        return response
-    raise HTTPException(status_code=500, detail=str(response))
-
-
-@api_router.post("/{category}/{model_name}")
-async def post_model_runner(category: str, model_name: str, request: Request):
-    api_path = f"{config.API_VERSION}/{category}/{model_name}"
-
-    form_data = await request.form()
-    json_data = await request.json()
-
-    # Parse form data and combine with JSON
-    request_json = {}
-    if json_data:
-        request_json.update(json_data)
-
-    # Handle files
-    files = {}
-    if form_data:
-        for key, value in form_data.items():
-            if isinstance(value, UploadFile):
-                files[key] = value
-            else:
-                request_json[key] = value
-
-    # Check if the API request is handled by a specific controller handler
-    if api_path in controllers.api_handlers:
-        status, response = controllers.api_handlers[api_path](request_json)
-        if status == 200:
-            return response
-        raise HTTPException(status_code=500, detail=str(response))
-
-    # Include files in the request
-    if files:
-        request_json.update(
-            {f"file_{key}": file.filename for key, file in files.items()}
-        )
-
-    status, response = controllers.handle_model_runner(api_path, request_json)
-    if status == 200:
-        return response
-    raise HTTPException(status_code=500, detail=str(response))
-
-
-######################################## API for Bank Workflow ########################################
-
-
-@api_router.post("/bank/segments", response_model=BankSegmentsCreateResponse)
-async def create_segments(request: BankSegmentsCreateRequest):
-    """
-    Create bank segments
-    """
-    status, response = controllers.bank_workflow_handlers["create_segments"](
+@api_router.post("/bank/banks", response_model=BanksCreateResponse)
+async def create_banks(request: BanksCreateRequest):
+    status, response = controllers.bank_workflow_handlers["create_banks"](
         request.dict()
     )
     if status == 200:
-        return BankSegmentsCreateResponse(**response)
+        return BanksCreateResponse(**response)
     raise HTTPException(
         status_code=status, detail=response.get("error", "Unknown error")
     )
 
 
-@api_router.get("/bank/segments/{case_id}")
-async def get_segments(case_id: str):
-    """
-    Get bank segments for a case
-    """
-    status, response = controllers.bank_workflow_handlers["get_segments"](case_id)
+@api_router.get("/bank/banks")
+async def get_banks(region_code: Optional[str] = None):
+    status, response = controllers.bank_workflow_handlers["get_banks"](region_code)
     if status == 200:
         return response
     raise HTTPException(
@@ -624,16 +563,31 @@ async def get_segments(case_id: str):
     )
 
 
-@api_router.delete(
-    "/bank/segments/{case_id}/{segment_id}", response_model=GenericSuccessResponse
-)
-async def delete_segment(case_id: str, segment_id: str):
-    """
-    Delete a bank segment
-    """
-    status, response = controllers.bank_workflow_handlers["delete_segment"](
-        case_id, segment_id
+@api_router.get("/bank/banks/{bank_id}")
+async def get_bank(bank_id: str):
+    status, response = controllers.bank_workflow_handlers["get_bank"](bank_id)
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
     )
+
+
+@api_router.put("/bank/banks/{bank_id}")
+async def update_bank(bank_id: str, request: BankUpdate):
+    status, response = controllers.bank_workflow_handlers["update_bank"](
+        bank_id, request.dict(exclude_none=True)
+    )
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.delete("/bank/banks/{bank_id}", response_model=GenericSuccessResponse)
+async def delete_bank(bank_id: str):
+    status, response = controllers.bank_workflow_handlers["delete_bank"](bank_id)
     if status == 200:
         return GenericSuccessResponse(**response)
     raise HTTPException(
@@ -641,11 +595,116 @@ async def delete_segment(case_id: str, segment_id: str):
     )
 
 
+@api_router.post("/bank/tasks", response_model=TasksCreateResponse)
+async def create_tasks(request: TasksCreateRequest):
+    status, response = controllers.bank_workflow_handlers["create_tasks"](
+        request.dict()
+    )
+    if status == 200:
+        return TasksCreateResponse(**response)
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/tasks")
+async def get_tasks():
+    status, response = controllers.bank_workflow_handlers["get_tasks"]()
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/tasks/{task_id}")
+async def get_task(task_id: str):
+    status, response = controllers.bank_workflow_handlers["get_task"](task_id)
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.delete("/bank/tasks/{task_id}", response_model=GenericSuccessResponse)
+async def delete_task(task_id: str):
+    status, response = controllers.bank_workflow_handlers["delete_task"](task_id)
+    if status == 200:
+        return GenericSuccessResponse(**response)
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.put("/bank/tasks/{task_id}/status")
+async def update_task_status(task_id: str, request: TaskStatusUpdate):
+    status, response = controllers.bank_workflow_handlers["update_task_status"](
+        task_id, request.dict(exclude_none=True)
+    )
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.post("/bank/tasks/{task_id}/run")
+async def run_task(task_id: str):
+    status, response = controllers.bank_workflow_handlers["run_task"](task_id)
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.post("/bank/basic-params", response_model=BasicParamsCreateResponse)
+async def create_basic_params(request: BasicParamsCreateRequest):
+    status, response = controllers.bank_workflow_handlers["create_basic_params"](
+        request.dict()
+    )
+    if status == 200:
+        return BasicParamsCreateResponse(**response)
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/basic-params")
+async def get_basic_params():
+    status, response = controllers.bank_workflow_handlers["get_basic_params"]()
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/basic-params/{param_id}")
+async def get_basic_param(param_id: str):
+    status, response = controllers.bank_workflow_handlers["get_basic_param"](param_id)
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.put("/bank/basic-params/{param_id}")
+async def update_basic_param(param_id: str, request: BasicParamUpdate):
+    status, response = controllers.bank_workflow_handlers["update_basic_param"](
+        param_id, request.dict(exclude_none=True)
+    )
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
 @api_router.post("/bank/sections", response_model=CrossSectionsCreateResponse)
 async def create_sections(request: CrossSectionsCreateRequest):
-    """
-    Create cross sections
-    """
     status, response = controllers.bank_workflow_handlers["create_sections"](
         request.dict()
     )
@@ -656,13 +715,10 @@ async def create_sections(request: CrossSectionsCreateRequest):
     )
 
 
-@api_router.get("/bank/sections/{case_id}")
-async def get_sections(case_id: str, segment_id: Optional[int] = None):
-    """
-    Get cross sections for a case
-    """
+@api_router.get("/bank/sections")
+async def get_sections(task_id: Optional[str] = None, bank_id: Optional[str] = None):
     status, response = controllers.bank_workflow_handlers["get_sections"](
-        case_id, segment_id
+        task_id, bank_id
     )
     if status == 200:
         return response
@@ -671,44 +727,9 @@ async def get_sections(case_id: str, segment_id: Optional[int] = None):
     )
 
 
-@api_router.delete(
-    "/bank/sections/{case_id}/{section_id}", response_model=GenericSuccessResponse
-)
-async def delete_section(case_id: str, section_id: str):
-    """
-    Delete a cross section
-    """
-    status, response = controllers.bank_workflow_handlers["delete_section"](
-        case_id, section_id
-    )
-    if status == 200:
-        return GenericSuccessResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/bank/corrections", response_model=CorrectionLinesCreateResponse)
-async def create_corrections(request: CorrectionLinesCreateRequest):
-    """
-    Create correction lines
-    """
-    status, response = controllers.bank_workflow_handlers["create_corrections"](
-        request.dict()
-    )
-    if status == 200:
-        return CorrectionLinesCreateResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/corrections/{case_id}")
-async def get_corrections(case_id: str):
-    """
-    Get correction lines for a case
-    """
-    status, response = controllers.bank_workflow_handlers["get_corrections"](case_id)
+@api_router.get("/bank/sections/{section_id}")
+async def get_section(section_id: str):
+    status, response = controllers.bank_workflow_handlers["get_section"](section_id)
     if status == 200:
         return response
     raise HTTPException(
@@ -716,16 +737,9 @@ async def get_corrections(case_id: str):
     )
 
 
-@api_router.delete(
-    "/bank/corrections/{case_id}/{correction_id}", response_model=GenericSuccessResponse
-)
-async def delete_correction(case_id: str, correction_id: str):
-    """
-    Delete a correction line
-    """
-    status, response = controllers.bank_workflow_handlers["delete_correction"](
-        case_id, correction_id
-    )
+@api_router.delete("/bank/sections/{section_id}", response_model=GenericSuccessResponse)
+async def delete_section(section_id: str):
+    status, response = controllers.bank_workflow_handlers["delete_section"](section_id)
     if status == 200:
         return GenericSuccessResponse(**response)
     raise HTTPException(
@@ -733,32 +747,128 @@ async def delete_correction(case_id: str, correction_id: str):
     )
 
 
-@api_router.get("/bank/cases/{case_id}/full", response_model=FullCaseDataResponse)
-async def get_full_case(case_id: str):
-    """
-    Get full case data (segments + sections + corrections)
-    """
-    status, response = controllers.bank_workflow_handlers["get_full_case"](case_id)
+@api_router.put("/bank/sections/{section_id}")
+async def update_section(section_id: str, request: CrossSectionUpdate):
+    status, response = controllers.bank_workflow_handlers["update_section"](
+        section_id, request.dict(exclude_none=True)
+    )
     if status == 200:
-        return FullCaseDataResponse(**response)
+        return response
     raise HTTPException(
         status_code=status, detail=response.get("error", "Unknown error")
     )
 
 
-@api_router.delete("/bank/cases/{case_id}", response_model=ClearCaseResponse)
-async def clear_case(case_id: str):
-    """
-    Clear all data for a case
-    """
-    status, response = controllers.bank_workflow_handlers["clear_case"](case_id)
+@api_router.get("/bank/tasks/{task_id}/full", response_model=FullTaskDataResponse)
+async def get_full_task(task_id: str):
+    status, response = controllers.bank_workflow_handlers["get_full_task"](task_id)
     if status == 200:
-        return ClearCaseResponse(**response)
+        return FullTaskDataResponse(**response)
     raise HTTPException(
         status_code=status, detail=response.get("error", "Unknown error")
     )
 
-    # Include files in the request
+
+@api_router.delete("/bank/tasks/{task_id}/clear", response_model=ClearTaskResponse)
+async def clear_task(task_id: str):
+    status, response = controllers.bank_workflow_handlers["clear_task"](task_id)
+    if status == 200:
+        return ClearTaskResponse(**response)
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/results", response_model=BankRiskResultsResponse)
+async def get_bank_risk_results(
+    task_id: Optional[str] = None,
+    bank_id: Optional[str] = None,
+    region_code: Optional[str] = None,
+):
+    status, response = controllers.bank_workflow_handlers["get_bank_risk_results"](
+        task_id=task_id,
+        bank_id=bank_id,
+        region_code=region_code,
+    )
+    if status == 200:
+        return BankRiskResultsResponse(**response)
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.get("/bank/results/{result_id}")
+async def get_bank_risk_result(result_id: int):
+    status, response = controllers.bank_workflow_handlers["get_bank_risk_result"](
+        result_id
+    )
+    if status == 200:
+        return response
+    raise HTTPException(
+        status_code=status, detail=response.get("error", "Unknown error")
+    )
+
+
+@api_router.post("/tasks/{task_id}/execute")
+async def execute_task(task_id: str):
+    """
+    Execute a task (run risk analysis for all sections)
+    """
+    status, response = controllers.handle_execute_task(task_id)
+    if status == 200:
+        return SuccessResponse(message=response.get("message"), status_code=200)
+    raise HTTPException(status_code=400, detail=response.get("error"))
+
+
+######################################## API for Models ########################################
+
+
+@api_router.get("/{category}/{model_name}")
+async def get_model_runner(category: str, model_name: str, request: Request):
+    api_path = f"{config.API_VERSION}/{category}/{model_name}"
+
+    if api_path in controllers.api_handlers:
+        request_json = dict(request.query_params)
+        status, response = controllers.api_handlers[api_path](request_json)
+        if status == 200:
+            return response
+        raise HTTPException(status_code=status, detail=str(response))
+
+    query_params = dict(request.query_params)
+    status, response = controllers.handle_model_runner(api_path, query_params)
+    if status == 200:
+        return response
+    raise HTTPException(status_code=status, detail=str(response))
+
+
+@api_router.post("/{category}/{model_name}")
+async def post_model_runner(category: str, model_name: str, request: Request):
+    api_path = f"{config.API_VERSION}/{category}/{model_name}"
+
+    form_data = await request.form()
+    try:
+        json_data = await request.json()
+    except:
+        json_data = None
+
+    request_json = {}
+    if json_data:
+        request_json.update(json_data)
+
+    files = {}
+    if form_data:
+        for key, value in form_data.items():
+            if isinstance(value, UploadFile):
+                files[key] = value
+            else:
+                request_json[key] = value
+
+    if api_path in controllers.api_handlers:
+        status, response = controllers.api_handlers[api_path](request_json)
+        if status == 200:
+            return response
+        raise HTTPException(status_code=status, detail=str(response))
+
     if files:
         request_json.update(
             {f"file_{key}": file.filename for key, file in files.items()}
@@ -767,4 +877,4 @@ async def clear_case(case_id: str):
     status, response = controllers.handle_model_runner(api_path, request_json)
     if status == 200:
         return response
-    raise HTTPException(status_code=500, detail=str(response))
+    raise HTTPException(status_code=status, detail=str(response))

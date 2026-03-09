@@ -108,11 +108,14 @@ def reset_database():
 
         print("Dropping existing tables...")
 
+        # IMPORTANT: Order matters (drop dependent tables first)
         tables = [
             "bank_risk_results",
-            "correction_lines",
             "cross_sections",
-            "bank_segments",
+            "basic_params",
+            "tasks",
+            "banks",
+            "correction_lines"
         ]
 
         for table in tables:

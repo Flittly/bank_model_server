@@ -822,3 +822,239 @@ def get_bank_risk_result(result_id: int) -> Optional[Dict[str, Any]]:
         )
         result = cursor.fetchone()
         return result if result else None
+
+
+# ========================================
+# Hydrodynamic 相关操作
+# ========================================
+
+
+def create_hydrodynamic_point(
+    point_id: str,
+    region_code: str,
+    set_name: str,
+    water_qs: str,
+    tidal_level: str,
+    x: float,
+    y: float,
+) -> int:
+    """
+    Create a hydrodynamic point
+    """
+    with db.get_db_cursor() as (conn, cursor):
+        cursor.execute(
+            """
+            INSERT INTO hydrodynamic_points (
+                point_id, region_code, set_name, water_qs, tidal_level, x, y, geom
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+            )
+            RETURNING id
+            """,
+            (point_id, region_code, set_name, water_qs, tidal_level, x, y, x, y),
+        )
+        return cursor.fetchone()[0]
+
+
+def get_hydrodynamic_point(point_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a single hydrodynamic point by point_id
+    """
+    with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
+        cursor.execute(
+            """
+            SELECT 
+                hp.*,
+                ST_AsGeoJSON(hp.geom)::jsonb as geometry
+            FROM hydrodynamic_points hp
+            WHERE hp.point_id = %s
+            """,
+            (point_id,),
+        )
+        result = cursor.fetchone()
+        return result if result else None
+
+
+def get_hydrodynamic_points(
+    region_code: Optional[str] = None,
+    set_name: Optional[str] = None,
+    water_qs: Optional[str] = None,
+    tidal_level: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Get hydrodynamic points with optional filters
+    """
+    with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
+        query = """
+            SELECT 
+                hp.*,
+                ST_AsGeoJSON(hp.geom)::jsonb as geometry
+            FROM hydrodynamic_points hp
+        """
+        params = []
+
+        conditions = []
+        if region_code is not None:
+            conditions.append("hp.region_code = %s")
+            params.append(region_code)
+        if set_name is not None:
+            conditions.append("hp.set_name = %s")
+            params.append(set_name)
+        if water_qs is not None:
+            conditions.append("hp.water_qs = %s")
+            params.append(water_qs)
+        if tidal_level is not None:
+            conditions.append("hp.tidal_level = %s")
+            params.append(tidal_level)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY hp.id"
+
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
+
+
+def create_hydrodynamic_data(
+    point_id_db: int,
+    time_step: int,
+    h: Optional[float] = None,
+    p: Optional[float] = None,
+    u: Optional[float] = None,
+    v: Optional[float] = None,
+) -> int:
+    """
+    Create hydrodynamic data for a point at a specific time step
+    """
+    with db.get_db_cursor() as (conn, cursor):
+        cursor.execute(
+            """
+            INSERT INTO hydrodynamic_data (point_id, time_step, h, p, u, v)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (point_id_db, time_step, h, p, u, v),
+        )
+        return cursor.fetchone()[0]
+
+
+def get_hydrodynamic_data(
+    point_id_db: Optional[int] = None,
+    time_step: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Get hydrodynamic data with optional filters
+    """
+    with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
+        query = "SELECT * FROM hydrodynamic_data"
+        params = []
+
+        conditions = []
+        if point_id_db is not None:
+            conditions.append("point_id = %s")
+            params.append(point_id_db)
+        if time_step is not None:
+            conditions.append("time_step = %s")
+            params.append(time_step)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY point_id, time_step"
+
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
+
+
+def get_hydrodynamic_data_by_point_id(point_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a point and all its time series data by point_id
+    """
+    point = get_hydrodynamic_point(point_id)
+    if not point:
+        return None
+
+    data = get_hydrodynamic_data(point_id_db=point["id"])
+    return {"point": point, "data": data}
+
+
+def delete_hydrodynamic_points(
+    region_code: Optional[str] = None,
+    set_name: Optional[str] = None,
+    water_qs: Optional[str] = None,
+    tidal_level: Optional[str] = None,
+) -> int:
+    """
+    Delete hydrodynamic points and related data (cascade)
+    """
+    with db.get_db_cursor() as (conn, cursor):
+        query = "DELETE FROM hydrodynamic_points"
+        params = []
+
+        conditions = []
+        if region_code is not None:
+            conditions.append("region_code = %s")
+            params.append(region_code)
+        if set_name is not None:
+            conditions.append("set_name = %s")
+            params.append(set_name)
+        if water_qs is not None:
+            conditions.append("water_qs = %s")
+            params.append(water_qs)
+        if tidal_level is not None:
+            conditions.append("tidal_level = %s")
+            params.append(tidal_level)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        cursor.execute(query, tuple(params))
+        return cursor.rowcount
+
+
+def bulk_create_hydrodynamic_points(points: list) -> list:
+    """
+    批量创建水动力点，返回插入后的id列表
+    points格式: [{'point_id': ..., 'region_code': ..., 'set_name': ..., 'water_qs': ..., 'tidal_level': ..., 'x': ..., 'y': ...}, ...]
+    注意：为了简化，每次只插入一个点并返回其id
+    """
+    inserted_ids = []
+    for p in points:
+        try:
+            point_id_db = create_hydrodynamic_point(
+                point_id=p["point_id"],
+                region_code=p["region_code"],
+                set_name=p["set_name"],
+                water_qs=p["water_qs"],
+                tidal_level=p["tidal_level"],
+                x=p["x"],
+                y=p["y"],
+            )
+            inserted_ids.append(point_id_db)
+        except Exception:
+            continue
+    return inserted_ids
+
+
+def bulk_create_hydrodynamic_data(data_list: list) -> int:
+    """
+    批量创建水动力数据记录
+    data_list格式: [{'point_id_db': ..., 'time_step': ..., 'h': ..., 'p': ..., 'u': ..., 'v': ...}, ...]
+    """
+    if not data_list:
+        return 0
+
+    with db.get_db_cursor() as (conn, cursor):
+        cursor.executemany(
+            """
+            INSERT INTO hydrodynamic_data (point_id, time_step, h, p, u, v)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            [
+                (d["point_id_db"], d["time_step"], d["h"], d["p"], d["u"], d["v"])
+                for d in data_list
+            ],
+        )
+        return cursor.rowcount

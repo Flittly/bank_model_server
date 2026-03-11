@@ -48,7 +48,13 @@ def convert_geojson_to_2437(geojson_data, dataset):
     # 要素与要素数据集的区别
     if not geojson_data.get('features'):
         features = []
-        coordinates = geojson_data['geometry']['coordinates']
+        # 改为直接从顶层坐标尝试获取，或者从可能的嵌套中提取
+        if 'geometry' in geojson_data:
+            coordinates = geojson_data['geometry']['coordinates']
+        elif 'coordinates' in geojson_data:
+            coordinates = geojson_data['coordinates']
+        else:
+            raise KeyError("Neither 'geometry' nor 'coordinates' found in geojson_data.")
         # swarp coordinates
         for coordinate in coordinates:
             tmp = coordinate[0]
@@ -365,7 +371,19 @@ def section_view(dem_path, section_geometry, output_path):
 @model.model_status_controller_sync
 def run_section_view_mcr(mcr: model.ModelCaseReference):
     
-    dem_path = os.path.join(config.DIR_RESOURCE, mcr.request_json['dem-id'])
+    # 从请求中解析正确的段和时间，构造真实的 tiff 路径
+    segment = mcr.request_json.get('segment', 'Mzs')
+    time_point = str(mcr.request_json.get('current-timepoint', '202304')).replace('-', '')
+    year = time_point[:4] if len(time_point) >= 4 else '2023'
+    
+    # 拼接路径：tiff/Mzs/2023/standard/202304/202304.tif
+    rel_path = os.path.join('tiff', segment, year, 'standard', time_point, f"{time_point}.tif")
+    dem_path = os.path.join(config.DIR_RESOURCE, rel_path)
+    
+    # 如果构造的路径文件不存在，尝试回退到默认传入的 dem-id 拼接
+    if not os.path.exists(dem_path):
+        dem_path = os.path.join(config.DIR_RESOURCE, mcr.request_json.get('dem-id', ''))
+
     section_geometry = mcr.request_json['section-geometry']
     output_path = os.path.join(mcr.directory, 'result')
     

@@ -13,6 +13,7 @@ import functools
 import py_compile
 import subprocess
 import multiprocessing
+from typing import cast
 from .modelProcess import Process_Queue
 from .modelCaseReference import ModelCaseReference as MCR
 
@@ -150,6 +151,7 @@ def load_code_from_pyc(pyc_path: str):
 def monitor_subprocess(args: list[str]):
     ids = copy.deepcopy(args)
     args.insert(0, sys.executable)
+    process = None
 
     try:
         process = subprocess.Popen(args)
@@ -167,11 +169,11 @@ def monitor_subprocess(args: list[str]):
         print(f"Error Happened When Model Case Is Running: {e}", flush=True)
 
     finally:
-        if process.poll() is None:
+        if process is not None and process.poll() is None:
             process.kill()
             for id in ids:
                 mcr = MCR.open_case(id)
-                if mcr.find_status(config.STATUS_LOCK):
+                if mcr is not None and mcr.find_status(config.STATUS_LOCK):
                     mcr.update_status(
                         config.STATUS_ERROR | config.STATUS_UNLOCK,
                         "Unexpected Error Happend!",
@@ -194,25 +196,37 @@ def mcr_checker(mcrs: list[MCR]):
     core_mcr = mcrs[-1]
     other_mcrs = mcrs[:-1]
 
-    # Returen if core model case is being used or used
-    if core_mcr.is_used():
+    # Check if core model case is being used or used (simplified)
+    core_status = core_mcr.get_status()
+    if (core_status & config.STATUS_COMPLETE) or (core_status & config.STATUS_ERROR):
+        return False
+    if (core_status & config.STATUS_LOCK) or (core_status & config.STATUS_RUNNING):
         return False
 
-    # Return if any other model cases is error
+    # Check if any other model cases is error (simplified)
     error_case_ids = []
     for mcr in other_mcrs:
-        if mcr.find_status(config.STATUS_ERROR):
+        mcr_status = mcr.get_status()
+        if mcr_status & config.STATUS_ERROR:
             error_case_ids.append(mcr.id)
+
     if len(error_case_ids):
-        error_log = MCR.generate_pre_error_log(core_mcr.id, error_case_ids)
+        # Simplified error log
+        error_log = "-".join(error_case_ids)
         core_mcr.update_status(
             config.STATUS_ERROR | config.STATUS_UNLOCK, error_log, "w"
         )
         return False
 
-    # Lock any model case if it has not run yet
+    # Lock any model case if it has not run yet (simplified)
     for mcr in mcrs:
-        if not mcr.is_used():
+        mcr_status = mcr.get_status()
+        if not (
+            (mcr_status & config.STATUS_LOCK)
+            or (mcr_status & config.STATUS_RUNNING)
+            or (mcr_status & config.STATUS_COMPLETE)
+            or (mcr_status & config.STATUS_ERROR)
+        ):
             mcr.update_status(config.STATUS_LOCK)
 
     return True
@@ -258,12 +272,14 @@ class ModelLauncher:
         self.parse = (
             types.MethodType(local_namespace["PARSING"], self)
             if "PARSING" in local_namespace
-            else lambda: None
+            else lambda request_json, model_path, other_dependent_ids=None: []
         )
         self.response = (
             types.MethodType(local_namespace["RESPONSING"], self)
             if "RESPONSING" in local_namespace
-            else lambda: None
+            else lambda core_mcr,
+            default_pre_mcrs,
+            other_pre_mcrs: core_mcr.make_response({})
         )
 
     @staticmethod
@@ -276,11 +292,24 @@ class ModelLauncher:
         compile_model_script_to_pyc(api, script_path)
 
     def run(self, request_json: dict, other_dependent_ids: list[str] = []) -> MCR:
-        other_pre_mcrs = [MCR.open_case(id) for id in other_dependent_ids]
-        default_pre_mcrs = self.parse(
-            request_json, self.program_path, other_dependent_ids
+        other_pre_mcrs: list[MCR] = cast(
+            list[MCR],
+            [mcr for id in other_dependent_ids if (mcr := MCR.open_case(id))],
         )
-        mcrs = other_pre_mcrs + default_pre_mcrs
+        default_pre_mcrs: list[MCR] = cast(
+            list[MCR],
+            self.parse(request_json, self.program_path, other_dependent_ids),
+        )
+        if not default_pre_mcrs:
+            raise RuntimeError(f"Model '{self.api}' did not create a core case")
+
+        mcrs: list[MCR] = other_pre_mcrs + default_pre_mcrs
+        core_mcr: MCR = mcrs[-1]
+
+        if core_mcr.find_status(config.STATUS_COMPLETE) or core_mcr.find_status(
+            config.STATUS_ERROR
+        ):
+            return core_mcr
 
         # Check whether core model case is valid for running
         if mcr_checker(mcrs):
@@ -289,13 +318,9 @@ class ModelLauncher:
             Process_Queue().put(command)
 
             # Make default response
-            self.response(
-                core_mcr=default_pre_mcrs[-1],
-                default_pre_mcrs=default_pre_mcrs[:-1],
-                other_pre_mcrs=other_pre_mcrs,
-            )
+            self.response(default_pre_mcrs[-1], default_pre_mcrs[:-1], other_pre_mcrs)
 
-        return mcrs[-1]
+        return core_mcr
 
     @staticmethod
     def fetch_model_from_API(api: str):

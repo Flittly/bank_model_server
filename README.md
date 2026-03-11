@@ -1,191 +1,32 @@
-# Bank Model Service (v0.08)
+# Yangtze Bank-Collapse Model Service
 
-**Bank Model Service (BMS)** is a model service application for **Collapse-Bank Monitoring and Warning**. `BMS` utilizes a layered design structure. From top to bottom, it consists of the following layers:
+`bank_model_server` remains the Python model service for the Yangtze bank-collapse risk assessment system.
 
-- **Web-server**: routes and controllers powered by Python FastAPI;
-- **Model**: geospatial processing models related to collapse bank analyses;
-- **Utility**: utilities for conveniencing file handling, md5 encoding, system checking, and geospatial data processing;
-- **API-configuration**: basic configuration for BMS.
+## Responsibilities
 
-To bridge the model using requests，the model scheduling and the calculated resource, a core class named **Model Case Reference (MCR)** is designed and applied in the model layer. The instance of this class can transfer a model using request and its related runtime-dependent parameters (usually found in the request body) from the web-server layer to a specific model case folder. Consequently, any requests using the same model with the same parameters can be directed to the same model running case.
+- keep the original model case execution mechanism;
+- keep legacy model APIs such as `/v0/mi/risk-level`, `/v0/re/*`, `/v0/nm/*`;
+- keep case/file APIs such as `/v0/mc/*` and `/v0/fs/*` that the upper layer can poll or download from;
+- expose an extra synchronous wrapper API at `POST /api/v1/predict` for service-to-service use;
+- do not own task CRUD, parameter-template CRUD, section CRUD, or other business workflow logic.
 
-```mermaid
-graph LR
+## Preserved original APIs
 
-        subgraph BMSAPIS[<b>APIS</b>]
-            API0>API 0]
-            API1>API 1]
-            APIN>API...]
-        end
+- model case APIs: `/v0/mc/*`, `/v0/mcs/*`
+- model/file APIs: `/v0/fs/*`
+- model execution APIs: `/v0/re/*`, `/v0/nm/*`, `/v0/mi/*`, `/v0/em/*`
 
-        subgraph Models[<b>Models</b>]
-            Model0[Model 0]
-            Model1[Model 1]
-            ModelN[Model...]
-        end
+## Added service APIs
 
-        subgraph ModelRequests[<b>Model Using Requests</b>]
-            Request0([Model Request 0])
-            Request1([Model Request 1])
-            Request2([Model Request 2])
-            RequestN([Model Request...])
-        end
+- `GET /api/v1/health`
+- `GET /api/v1/models`
+- `POST /api/v1/predict`
 
-        CaseID0(((<b>Case ID</b>)))
+## Run
 
-        subgraph ModelCaseReferences[<b>Model Case References</b>]
-            MCR0((MCR 0))
-            MCR1((MCR 1))
-            MCRN((MCR...))
-        end
-
-        subgraph CaseContent[<b>Model Case Content In Disk</b>]
-            Identity[identity.json]
-            Response[response.json]
-            subgraph Result[<b>Result</b>]
-                File0[File 0]
-                File1[File 1]
-                FileN[File...]
-            end
-            subgraph Status[<b>Status</b>]
-                StatusFile[StatusFile]
-            end
-        end
-
-        subgraph Resource[<b>Resource</b>]
-            subgraph DEMFiles[e.g. DEM Resource]
-                DEM0[DEM Resource 0]
-                DEM1[DEM Resource 1]
-                DEMN[DEM Resource...]
-            end
-
-        end
-
-    API0-->Request0
-    Request0-.-|SAME API and REQUEST BODY|Request2
-    API0-->Request2
-
-
-    MCR0--o|PARSE REQUEST and USE|Model0
-
-    MCR0--o|PARSE REQUEST and INPUT|DEM0
-    MCR0--o|PARSE REQUEST and INPUT|DEM1
-    MCR0-->|OUTPUT|Result
-    MCR0-->|SERIALIZE|Identity
-    MCR0-->|GENERATE after MODEL RUNNING COMPLETE|Response
-
-    Request0-->|GENERATE from URL and REQUEST BODY|CaseID0
-    Request2-->|GENERATE from URL and REQUEST BODY|CaseID0
-    CaseID0-->MCR0
-    MCR0==x|POINT TO|CaseContent
-    MCR0-->|REFLECT MODEL RUNNING STATUS|Status
-
-    style BMSAPIS fill:none
-    style Models fill:none
-    style ModelRequests fill:none
-    style ModelCaseReferences fill:none
-    style CaseContent fill:none
-    style Resource fill:none
-    style Result fill:none
-    style Status fill:none
-    style DEMFiles fill:none
-```
-
-**NOTE**
-
-The basic condition for MCR to be **EFFECTIVE** is that when the model and parameters have not changed, the results of multiple runs are **COMPLETELY CONSISTENT**.
-
-## Installation
-
-### Using uv (Recommended)
-
-1. Install [uv](https://github.com/astral-sh/uv):
-```bash
-pip install uv
-```
-
-2. Install dependencies:
 ```bash
 uv sync
-```
-
-3. Run:
-```bash
 uv run python run.py
 ```
 
-### Using pip
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Run:
-```bash
-python run.py
-```
-
-### Using Conda (Legacy)
-
-For backward compatibility, the conda environment setup is still available:
-```bash
-conda env create -f environment.yaml
-conda activate BMS
-python -u "run.py"
-```
-
-## API Documentation
-
-FastAPI automatically generates interactive API documentation:
-
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-
-## Project Structure
-
-```
-bank_model_server/
-├── app/
-│   ├── __init__.py          # FastAPI app factory
-│   └── main/
-│       ├── __init__.py     # APIRouter definition
-│       ├── controllers.py  # Business logic handlers
-│       ├── routes.py       # FastAPI route definitions
-│       └── schemas.py      # Pydantic models
-├── config.py               # Application configuration
-├── run.py                  # Application entry point
-├── pyproject.toml         # Project dependencies (uv)
-├── requirements.txt        # Project dependencies (pip)
-├── environment.yaml        # Conda environment (legacy)
-├── model/                 # Model implementations
-├── modelResource/         # Model resources (NOT modified)
-├── util/                  # Utility modules
-└── case/                  # Model case storage
-```
-
-## Install flow-field texture builder
-
-Trying use `TextureBuilder` requires the conda environment for `BMS` and [Cmake](https://cmake.org/).
-
-- Install for Linux:
-
-```
-    cd model/flowFieldTextureBuilder
-    mkdir build
-    cd build
-    cmake ..
-    make
-```
-
-- Install for MacOS:
-
-```
-    cd model/flowFieldTextureBuilder
-    mkdir build
-    cd build
-    mkdir macos
-    cd macos
-    cmake ...
-    make
-```
+Swagger UI is available at `http://localhost:8088/docs`.

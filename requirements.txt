@@ -5,12 +5,6 @@
 fastapi>=0.104.0
 uvicorn>=0.24.0
 
-# Web framework compatibility
-python-multipart>=0.0.6
-jinja2>=3.1.2
-werkzeug>=3.0.1
-flask>=3.0.0  # Keep for potential compatibility
-
 # Data validation
 pydantic>=2.5.0
 
@@ -20,7 +14,7 @@ numpy>=1.26.0
 # Geographic spatial processing
 gdal==3.6.2
 pyproj>=3.6.0
-psycopg2-binary>=2.9.9
 
 # Image processing
 pillow>=10.0.0
+portalocker>=2.8.0

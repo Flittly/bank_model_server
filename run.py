@@ -11,24 +11,19 @@ import uvicorn
 
 
 def initialize_work_space():
-    if not os.path.exists(config.DIR_MODEL_CASE):
-        os.makedirs(config.DIR_MODEL_CASE)
+    os.makedirs(config.DIR_MODEL_CASE, exist_ok=True)
+    os.makedirs(os.path.dirname(config.DIR_STORAGE_LOG), exist_ok=True)
 
     if not os.path.exists(config.DIR_GLOBALE_FILE_LOCKER):
         with open(config.DIR_GLOBALE_FILE_LOCKER, "w") as file:
             pass
 
+    if not os.path.exists(config.DIR_STORAGE_LOG):
+        with open(config.DIR_STORAGE_LOG, "w", encoding="utf-8") as file:
+            file.write("0\n")
+
     for key in config.MODEL_REGISTRY:
         launcher.preheat(key)
-
-    # Initialize Database
-    try:
-        from util import db_admin
-
-        print("Checking database initialization...", flush=True)
-        db_admin.init_db()
-    except Exception as e:
-        print(f"Database initialization warning: {e}", flush=True)
 
     StorageMonitor().initialize([config.DIR_ROOT], config.DIR_STORAGE_LOG)
 

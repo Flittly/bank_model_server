@@ -1,23 +1,14 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
-def create_app():
 
+def create_app() -> FastAPI:
     app = FastAPI(
-        title='Bank Model Service',
-        description='API server for bank model computations',
-        version='0.1.0'
+        title="Bank Model Service",
+        description="Yangtze bank-collapse risk model service",
+        version="1.0.0",
     )
 
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"detail": exc.detail},
-        )
-
-    # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -27,6 +18,6 @@ def create_app():
     )
 
     from app.main import api_router
-    app.include_router(api_router, prefix="/v0")
 
+    app.include_router(api_router)
     return app

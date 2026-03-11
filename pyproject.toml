@@ -22,16 +22,11 @@ classifiers = [
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
-    "python-multipart>=0.0.6",
-    "jinja2>=3.1.2",
-    "werkzeug>=3.0.1",
-    "flask>=3.0.0",  # Keep for potential compatibility if needed
     "pydantic>=2.5.0",
     "numpy>=1.26.0",
     "gdal==3.6.2 ; sys_platform != 'win32'",
     "gdal ; sys_platform == 'win32'",
     "pyproj>=3.6.0",
-    "psycopg2-binary>=2.9.9",
     "pillow>=10.0.0",
     "portalocker>=2.8.0",
 ]

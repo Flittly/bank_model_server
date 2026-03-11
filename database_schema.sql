@@ -249,3 +249,68 @@ CREATE INDEX IF NOT EXISTS idx_bank_results_section ON bank_risk_results(section
 CREATE INDEX IF NOT EXISTS idx_bank_results_task ON bank_risk_results(task_id);
 CREATE INDEX IF NOT EXISTS idx_bank_results_region ON bank_risk_results(region_code);
 CREATE INDEX IF NOT EXISTS idx_bank_results_geom ON bank_risk_results USING GIST(geom);
+
+-- ========================================
+-- 6. 水动力点表 (hydrodynamic_points)
+-- 存储水动力数据的坐标点信息
+-- ========================================
+CREATE TABLE IF NOT EXISTS hydrodynamic_points (
+    id SERIAL PRIMARY KEY,
+    point_id VARCHAR(100) UNIQUE NOT NULL,
+    region_code VARCHAR(50) NOT NULL,
+    set_name VARCHAR(50) NOT NULL,
+    water_qs VARCHAR(20) NOT NULL,
+    tidal_level VARCHAR(20) NOT NULL,
+    
+    -- 坐标数据
+    x NUMERIC NOT NULL,
+    y NUMERIC NOT NULL,
+    geom GEOMETRY(Point, 4326),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_hydro_points_id ON hydrodynamic_points(point_id);
+CREATE INDEX IF NOT EXISTS idx_hydro_points_region ON hydrodynamic_points(region_code);
+CREATE INDEX IF NOT EXISTS idx_hydro_points_set ON hydrodynamic_points(set_name);
+CREATE INDEX IF NOT EXISTS idx_hydro_points_water ON hydrodynamic_points(water_qs);
+CREATE INDEX IF NOT EXISTS idx_hydro_points_tidal ON hydrodynamic_points(tidal_level);
+CREATE INDEX IF NOT EXISTS idx_hydro_points_geom ON hydrodynamic_points USING GIST(geom);
+
+CREATE OR REPLACE FUNCTION update_hydrodynamic_points_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS trigger_hydrodynamic_points_updated_at ON hydrodynamic_points;
+CREATE TRIGGER trigger_hydrodynamic_points_updated_at
+BEFORE UPDATE ON hydrodynamic_points
+FOR EACH ROW EXECUTE FUNCTION update_hydrodynamic_points_updated_at();
+
+-- ========================================
+-- 7. 水动力数据表 (hydrodynamic_data)
+-- 存储每个坐标点在不同时段的水动力数据
+-- ========================================
+CREATE TABLE IF NOT EXISTS hydrodynamic_data (
+    id SERIAL PRIMARY KEY,
+    point_id INTEGER NOT NULL,
+    time_step INTEGER NOT NULL,
+    
+    -- 水动力参数
+    h NUMERIC,
+    p NUMERIC,
+    u NUMERIC,
+    v NUMERIC,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (point_id) REFERENCES hydrodynamic_points(id) ON DELETE CASCADE,
+    UNIQUE(point_id, time_step)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hydro_data_point ON hydrodynamic_data(point_id);
+CREATE INDEX IF NOT EXISTS idx_hydro_data_timestep ON hydrodynamic_data(time_step);

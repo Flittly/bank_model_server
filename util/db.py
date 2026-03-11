@@ -1,9 +1,28 @@
 from contextlib import contextmanager
+from decimal import Decimal
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 import config
+
+
+def decimal_to_float(value, cur):
+    """
+    psycopg2 类型转换器：将 Decimal 转换为 float
+    """
+    if value is not None:
+        return float(value)
+    return None
+
+
+# 注册 Decimal 类型转换器
+DECIMAL2FLOAT = psycopg2.extensions.new_type(
+    (1700,),  # DECIMAL 的 OID
+    "DECIMAL2FLOAT",
+    decimal_to_float,
+)
+psycopg2.extensions.register_type(DECIMAL2FLOAT)
 
 
 @contextmanager

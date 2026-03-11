@@ -368,8 +368,25 @@ def region_flush_func(flush_all_path: str, region_geometry: dict, output_path: s
 @model.model_status_controller_sync
 def run_global_flush_mcr(mcr: MCR):
     
-    bench_path = os.path.join(config.DIR_RESOURCE, mcr.request_json['bench-id'])
-    ref_path = os.path.join(config.DIR_RESOURCE, mcr.request_json['ref-id'])
+    # 动态解析拼接 bench 文件和 ref 文件的实际路径
+    segment = mcr.request_json.get('segment', 'Mzs')
+    
+    # 解析并拼接 bench-id
+    bench_time = str(mcr.request_json.get('bench-timepoint', mcr.request_json.get('bench-id', '202304'))).replace('-', '')
+    bench_year = bench_time[:4] if len(bench_time) >= 4 else '2023'
+    bench_rel_path = os.path.join('tiff', segment, bench_year, 'standard', bench_time, f"{bench_time}.tif")
+    bench_path = os.path.join(config.DIR_RESOURCE, bench_rel_path)
+    if not os.path.exists(bench_path):
+        bench_path = os.path.join(config.DIR_RESOURCE, mcr.request_json.get('bench-id', ''))
+        
+    # 解析并拼接 ref-id
+    ref_time = str(mcr.request_json.get('ref-timepoint', mcr.request_json.get('ref-id', '202304'))).replace('-', '')
+    ref_year = ref_time[:4] if len(ref_time) >= 4 else '2023'
+    ref_rel_path = os.path.join('tiff', segment, ref_year, 'standard', ref_time, f"{ref_time}.tif")
+    ref_path = os.path.join(config.DIR_RESOURCE, ref_rel_path)
+    if not os.path.exists(ref_path):
+        ref_path = os.path.join(config.DIR_RESOURCE, mcr.request_json.get('ref-id', ''))
+
     output_path = os.path.join(mcr.directory, 'result')
     
     global_flush_func(bench_path, ref_path, output_path)

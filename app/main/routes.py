@@ -1,53 +1,19 @@
-import os
 import json
+import os
 import zipfile
-import uuid
-import tempfile
-from typing import Optional, Dict
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Response
+from typing import Any
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-import util
+
 import config
-import model
+import util
 from . import controllers
-from .schemas import (
-    CaseId,
-    CaseIds,
-    ModelCaseStatus,
-    ModelCaseResult,
-    ModelCaseError,
-    CallTimeResponse,
-    SerializationResponse,
-    DiskUsageResponse,
-    ErrorResponse,
-    SuccessResponse,
-    BanksCreateRequest,
-    BanksCreateResponse,
-    BankUpdate,
-    TasksCreateRequest,
-    TasksCreateResponse,
-    TaskStatusUpdate,
-    BasicParamsCreateRequest,
-    BasicParamsCreateResponse,
-    BasicParamUpdate,
-    CrossSectionsCreateRequest,
-    CrossSectionsCreateResponse,
-    CrossSectionUpdate,
-    FullTaskDataResponse,
-    ClearTaskResponse,
-    BankRiskResultResponse,
-    BankRiskResultsResponse,
-    GenericSuccessResponse,
-    GenericErrorResponse,
-    HydrodynamicListResponse,
-)
-from . import controllers
-from . import (
-    api_router,
-)
+from .schemas import PredictRequest
+
+api_router = APIRouter()
 
 
-# Helper function
 def allowed_file(filename: str) -> bool:
     return (
         "." in filename
@@ -55,826 +21,383 @@ def allowed_file(filename: str) -> bool:
     )
 
 
-######################################## API for Model Case ########################################
+def handle_not_found(exc: FileNotFoundError) -> HTTPException:
+    return HTTPException(status_code=404, detail=str(exc))
 
 
-@api_router.get("/mc/status", response_model=ModelCaseStatus)
-async def get_model_case_status(case_id: str):
-    status, response = controllers.api_handlers[config.API_MC_STATUS](case_id)
-    if status == 200:
-        return ModelCaseStatus(status=response)
-    raise HTTPException(status_code=404, detail=response)
+def parse_case_id(case_id: str | None, legacy_id: str | None) -> str:
+    try:
+        return controllers.resolve_case_id(case_id, legacy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@api_router.get("/mc/result", response_model=ModelCaseResult)
-async def get_model_case_result(case_id: str):
-    status, response = controllers.api_handlers[config.API_MC_RESULT](case_id)
-    if status == 200:
-        return ModelCaseResult(result=response)
-    raise HTTPException(status_code=404, detail=response)
+def parse_case_ids(body: dict[str, Any]) -> list[str]:
+    case_ids = body.get("case-ids") or body.get("case_ids") or []
+    if not isinstance(case_ids, list) or not case_ids:
+        raise HTTPException(status_code=400, detail="Missing case-ids")
+    return case_ids
 
 
-@api_router.get("/mc/error", response_model=ModelCaseError)
-async def get_model_case_error(case_id: str):
-    status, response = controllers.api_handlers[config.API_MC_ERROR](case_id)
-    if status == 200:
-        return ModelCaseError(**response)
-    raise HTTPException(status_code=404, detail=response)
+@api_router.get("/api/v1/health")
+async def health() -> dict[str, Any]:
+    return controllers.health()
 
 
-@api_router.get("/mc/pre-error-cases")
-async def get_pre_error_cases(case_id: str):
-    status, response = controllers.api_handlers[config.API_MC_PRE_ERROR_CASES](case_id)
-    if status == 200:
-        return response
-    raise HTTPException(status_code=404, detail=response)
+@api_router.get("/api/v1/models")
+async def list_models() -> dict[str, Any]:
+    return controllers.list_models()
 
 
-@api_router.delete("/mc")
-async def delete_model_case(case_id: str):
-    status, response = controllers.api_handlers[config.API_MC_DELETE](case_id)
-    if status == 200:
-        return SuccessResponse(message=response, status_code=200)
-    raise HTTPException(status_code=404, detail=response)
-
-
-@api_router.post("/mcs/status", response_model=Dict[str, str])
-async def get_model_cases_status(case_ids: CaseIds):
-    status, response = controllers.api_handlers[config.API_MCS_STATUS](case_ids.dict())
-    if status == 200:
-        return response
-    raise HTTPException(status_code=404, detail=response)
-
-
-@api_router.get("/mcs/time", response_model=CallTimeResponse)
-async def get_model_cases_call_time():
-    response = controllers.api_handlers[config.API_MCS_TIME]()
-    return CallTimeResponse(timestamps=response.get("timestamps", []))
-
-
-@api_router.post("/mcs/serialization", response_model=SerializationResponse)
-async def get_model_cases_serialization(case_ids: CaseIds):
-    status, response = controllers.api_handlers[config.API_MCS_SERIALIZATION](
-        case_ids.dict()
-    )
-    if status == 200:
-        return SerializationResponse(**response)
-    raise HTTPException(status_code=404, detail=response)
-
-
-@api_router.post("/mcs")
-async def delete_model_cases(case_ids: CaseIds):
-    status, response = controllers.api_handlers[config.API_MCS_DELETE](case_ids.dict())
-    if status == 200:
-        return SuccessResponse(message=response, status_code=200)
-    raise HTTPException(status_code=404, detail=response)
-
-
-@api_router.delete("/fs/resource")
-async def delete_resource_directory(directory: str):
-    status, response = controllers.api_handlers[config.API_FS_RESOURCE_DELETE](
-        directory
-    )
-    if status == 200:
-        return SuccessResponse(message=response, status_code=200)
-    raise HTTPException(status_code=404, detail=response)
-
-
-######################################## API for File System ########################################
-
-
-@api_router.get("/fs/result/file")
-async def get_model_case_file(case_id: str, filename: str):
-    status, file_path = controllers.api_handlers[config.API_FS_RESULT_FILE](
-        case_id, filename
-    )
-    if status == 200:
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(
-            file_path, media_type="application/octet-stream", filename=filename
+@api_router.post("/api/v1/predict")
+async def predict(request: PredictRequest) -> dict[str, Any]:
+    try:
+        return controllers.predict(
+            request.model_api, request.payload, request.timeout_seconds
         )
-    raise HTTPException(status_code=404, detail=file_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@api_router.get("/fs/resource/file")
-async def get_resource_file(name: str):
-    status, file_path = controllers.api_handlers[config.API_FS_RESOURCE_FILE](name)
-    if status == 200:
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="File not found")
+@api_router.get(f"{config.API_MC_STATUS}")
+async def get_model_case_status(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> dict[str, Any]:
+    try:
+        return controllers.get_model_case_status(parse_case_id(case_id, legacy_id))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_MC_RESULT}")
+async def get_model_case_result(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> dict[str, Any]:
+    try:
+        return controllers.get_model_case_result(parse_case_id(case_id, legacy_id))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_MC_ERROR}")
+async def get_model_case_error(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> dict[str, Any]:
+    try:
+        return controllers.get_model_case_error(parse_case_id(case_id, legacy_id))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_MC_PRE_ERROR_CASES}")
+async def get_pre_error_cases(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> dict[str, Any]:
+    try:
+        return controllers.get_pre_error_cases(parse_case_id(case_id, legacy_id))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.delete(f"{config.API_MC_DELETE}")
+async def delete_model_case(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> dict[str, Any]:
+    try:
+        return controllers.delete_model_case(parse_case_id(case_id, legacy_id))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.post(f"{config.API_MCS_STATUS}")
+async def get_model_cases_status(body: dict[str, Any]) -> dict[str, str]:
+    try:
+        return controllers.get_model_cases_status(parse_case_ids(body))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_MCS_TIME}")
+async def get_model_cases_call_time() -> dict[str, Any]:
+    return controllers.get_model_cases_call_time()
+
+
+@api_router.post(f"{config.API_MCS_SERIALIZATION}")
+async def get_model_cases_serialization(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return controllers.get_model_cases_serialization(parse_case_ids(body))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.post(f"{config.API_MCS_DELETE}")
+async def delete_model_cases(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return controllers.delete_model_cases(parse_case_ids(body))
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_FS_RESULT_FILE}")
+async def get_model_case_file(
+    filename: str = Query(alias="filename"),
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+    legacy_name: str | None = Query(default=None, alias="name"),
+):
+    try:
+        file_path = controllers.get_model_case_file(
+            parse_case_id(case_id, legacy_id), legacy_name or filename
+        )
+        download_name = os.path.basename(file_path)
+        return FileResponse(
+            file_path, media_type="application/octet-stream", filename=download_name
+        )
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
+
+
+@api_router.get(f"{config.API_FS_RESOURCE_FILE}")
+async def get_resource_file(name: str) -> FileResponse:
+    try:
+        file_path = controllers.get_resource_file(name)
         return FileResponse(
             file_path,
             media_type="application/octet-stream",
             filename=os.path.basename(file_path),
         )
-    raise HTTPException(status_code=404, detail=file_path)
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
 
 
-@api_router.get("/fs/result/zip")
-async def get_model_case_zip(case_id: str):
-    status, zip_path = controllers.api_handlers[config.API_FS_RESULT_ZIP](case_id)
-    if status == 200:
-        if not os.path.exists(zip_path):
-            raise HTTPException(status_code=404, detail="Zip file not found")
+@api_router.get(f"{config.API_FS_RESULT_ZIP}")
+async def get_model_case_zip(
+    case_id: str | None = Query(default=None),
+    legacy_id: str | None = Query(default=None, alias="id"),
+) -> FileResponse:
+    try:
+        zip_path = controllers.get_model_case_zip(parse_case_id(case_id, legacy_id))
         return FileResponse(
             zip_path, media_type="application/zip", filename=os.path.basename(zip_path)
         )
-    raise HTTPException(status_code=404, detail=zip_path)
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
 
 
-@api_router.post("/fs/resource/zip")
-async def upload_resource_zip(file: UploadFile = File(...), json_data: str = Form(...)):
+@api_router.delete(f"{config.API_FS_RESOURCE_DELETE}")
+async def delete_resource_directory(directory: str) -> dict[str, Any]:
     try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
+        return controllers.delete_resource_directory(directory)
+    except FileNotFoundError as exc:
+        raise handle_not_found(exc) from exc
 
+
+@api_router.post(f"{config.API_FS_RESOURCE_ZIP}")
+async def upload_resource_zip(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    request_json = json.loads(json_data)
     resource_path = os.path.join(config.DIR_RESOURCE, request_json.get("type", ""))
-    if not resource_path:
-        raise HTTPException(status_code=400, detail="No type specified")
-
-    if not os.path.exists(resource_path):
-        os.makedirs(resource_path, exist_ok=True)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(resource_path, filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(resource_path)
-
-        os.remove(zip_path)
-        util.update_size(
-            config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(resource_path)
-        )
-
-        return SuccessResponse(message="OK", status_code=200)
-    else:
+    os.makedirs(resource_path, exist_ok=True)
+    if not file.filename or not allowed_file(file.filename):
         raise HTTPException(status_code=400, detail="File type not allowed")
+    zip_path = os.path.join(resource_path, file.filename)
+    with open(zip_path, "wb") as buffer:
+        buffer.write(await file.read())
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(resource_path)
+    os.remove(zip_path)
+    util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(resource_path))
+    return {"message": "OK"}
 
 
-@api_router.post("/fs/resource/tiff")
-async def upload_tiff(file: UploadFile = File(...), json_data: str = Form(...)):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
-
+async def upload_structured_resource(
+    file: UploadFile, json_data: str, base_directory: str, extension: str
+) -> dict[str, Any]:
+    request_json = json.loads(json_data)
     segment = request_json["segment"]
     year = request_json["year"]
-    set = request_json["set"]
+    set_name = request_json["set"]
     name = request_json["name"]
-    set_path = os.path.join(config.DIR_RESOURCE_TIFF, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(set_path, filename)
-        fn, fe = os.path.splitext(filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-        util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
-
-        tiff_extension = None
-        if os.path.exists(os.path.join(file_path, name + ".tiff")):
-            tiff_extension = "tiff"
-        elif os.path.exists(os.path.join(file_path, name + ".tif")):
-            tiff_extension = "tif"
-        else:
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        return {
-            "directory": f"tiff/{segment}/{year}/{set}/{fn}/{name}.{tiff_extension}"
-        }
-    else:
-        raise HTTPException(status_code=400, detail="File Type Not Allowed")
+    set_path = os.path.join(base_directory, segment, year, set_name)
+    os.makedirs(set_path, exist_ok=True)
+    if not file.filename or not allowed_file(file.filename):
+        raise HTTPException(status_code=400, detail="File type not allowed")
+    zip_path = os.path.join(set_path, file.filename)
+    root_name, _ = os.path.splitext(file.filename)
+    with open(zip_path, "wb") as buffer:
+        buffer.write(await file.read())
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(set_path)
+        util.remove_ignore_files_and_directories()
+    os.remove(zip_path)
+    file_path = os.path.join(set_path, root_name)
+    target_path = os.path.join(file_path, name + extension)
+    if not os.path.exists(target_path):
+        raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
+    util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
+    relative_root = os.path.relpath(file_path, config.DIR_RESOURCE).replace("\\", "/")
+    return {"directory": f"{relative_root}/{name}{extension}"}
 
 
-@api_router.post("/fs/resource/adf")
-async def upload_adf(file: UploadFile = File(...), json_data: str = Form(...)):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
+@api_router.post(f"{config.API_FS_RESOURCE_TIFF}")
+async def upload_tiff(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    return await upload_structured_resource(
+        file, json_data, config.DIR_RESOURCE_TIFF, ".tif"
+    )
 
+
+@api_router.post(f"{config.API_FS_RESOURCE_ADF}")
+async def upload_adf(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    return await upload_structured_resource(
+        file, json_data, config.DIR_RESOURCE_ADF, ".adf"
+    )
+
+
+@api_router.post(f"{config.API_FS_RESOURCE_JSON}")
+async def upload_json_resource(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    return await upload_structured_resource(
+        file, json_data, config.DIR_RESOURCE_JSON, ".json"
+    )
+
+
+@api_router.post(f"{config.API_FS_RESOURCE_GEOJSON}")
+async def upload_geojson(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    return await upload_structured_resource(
+        file, json_data, config.DIR_RESOURCE_GEOJSON, ".geojson"
+    )
+
+
+@api_router.post(f"{config.API_FS_RESOURCE_SHP}")
+async def upload_shapefile(
+    file: UploadFile = File(...), json_data: str = Form(...)
+) -> dict[str, Any]:
+    request_json = json.loads(json_data)
     segment = request_json["segment"]
     year = request_json["year"]
-    set = request_json["set"]
+    set_name = request_json["set"]
     name = request_json["name"]
-    set_path = os.path.join(config.DIR_RESOURCE_ADF, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(set_path, filename)
-        fn, fe = os.path.splitext(filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-        adf_path = os.path.join(file_path, name + ".adf")
-        util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
-
-        if not os.path.exists(adf_path):
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        return {"directory": f"adf/{segment}/{year}/{set}/{fn}/{name}.adf"}
-    else:
+    set_path = os.path.join(config.DIR_RESOURCE_SHP, segment, year, set_name)
+    os.makedirs(set_path, exist_ok=True)
+    if not file.filename or not allowed_file(file.filename):
         raise HTTPException(status_code=400, detail="File Type Not Allowed")
+    zip_path = os.path.join(set_path, file.filename)
+    root_name, _ = os.path.splitext(file.filename)
+    with open(zip_path, "wb") as buffer:
+        buffer.write(await file.read())
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(set_path)
+        util.remove_ignore_files_and_directories()
+    os.remove(zip_path)
+    file_path = os.path.join(set_path, root_name)
+    shp_path = os.path.join(file_path, name + ".shp")
+    required_extensions = [".shp", ".shx", ".prj", ".dbf"]
+    if not os.path.exists(shp_path) or not all(
+        util.contains_extension(file_path, ext) for ext in required_extensions
+    ):
+        raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
+    util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
+    return {"directory": f"shp/{segment}/{year}/{set_name}/{root_name}/{name}.shp"}
 
 
-@api_router.post("/fs/resource/json")
-async def upload_json(file: UploadFile = File(...), json_data: str = Form(...)):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
-
-    segment = request_json["segment"]
-    year = request_json["year"]
-    set = request_json["set"]
-    name = request_json["name"]
-    set_path = os.path.join(config.DIR_RESOURCE_JSON, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(set_path, filename)
-        fn, fe = os.path.splitext(filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-        json_path = os.path.join(file_path, name + ".json")
-        util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
-
-        if not os.path.exists(json_path):
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        return {"directory": f"json/{segment}/{year}/{set}/{fn}/{name}.json"}
-    else:
-        raise HTTPException(status_code=400, detail="File Type Not Allowed")
-
-
-@api_router.post("/fs/resource/geojson")
-async def upload_geojson(file: UploadFile = File(...), json_data: str = Form(...)):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
-
-    segment = request_json["segment"]
-    year = request_json["year"]
-    set = request_json["set"]
-    name = request_json["name"]
-    set_path = os.path.join(config.DIR_RESOURCE_GEOJSON, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(set_path, filename)
-        fn, fe = os.path.splitext(filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-        json_path = os.path.join(file_path, name + ".geojson")
-        util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
-
-        if not os.path.exists(json_path):
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        return {"directory": f"geojson/{segment}/{year}/{set}/{fn}/{name}.geojson"}
-    else:
-        raise HTTPException(status_code=400, detail="File Type Not Allowed")
-
-
-@api_router.post("/fs/resource/shapefile")
-async def upload_shapefile(file: UploadFile = File(...), json_data: str = Form(...)):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
-
-    segment = request_json["segment"]
-    year = request_json["year"]
-    set = request_json["set"]
-    name = request_json["name"]
-    set_path = os.path.join(config.DIR_RESOURCE_SHP, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        zip_path = os.path.join(set_path, filename)
-        fn, fe = os.path.splitext(filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-        shp_path = os.path.join(file_path, name + ".shp")
-        util.update_size(config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(file_path))
-
-        complete = True
-        if not util.contains_extension(file_path, ".shp"):
-            complete = False
-        if not util.contains_extension(file_path, ".shx"):
-            complete = False
-        if not util.contains_extension(file_path, ".prj"):
-            complete = False
-        if not util.contains_extension(file_path, ".dbf"):
-            complete = False
-        if not os.path.exists(shp_path):
-            complete = False
-        if not complete:
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        return {"directory": f"shp/{segment}/{year}/{set}/{fn}/{name}.shp"}
-    else:
-        raise HTTPException(status_code=400, detail="File Type Not Allowed")
-
-
-@api_router.post("/fs/resource/hydrodynamic")
+@api_router.post(f"{config.API_FS_RESOURCE_HYDRODYNAMIC}")
 async def upload_hydrodynamic_zip(
     file: UploadFile = File(...), json_data: str = Form(...)
-):
-    try:
-        request_json = json.loads(json_data)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON data")
-
+) -> dict[str, Any]:
+    request_json = json.loads(json_data)
     segment = request_json["segment"]
     year = request_json["year"]
-    set = request_json["set"]
+    set_name = request_json["set"]
     boundary_path = request_json["boundary"]
-    set_path = os.path.join(config.DIR_RESOURCE_HYDRODYNAMIC, segment, year, set)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No selected file")
-
-    if not os.path.exists(set_path):
-        os.makedirs(set_path, exist_ok=True)
-
-    if file and allowed_file(file.filename):
-        filename = file.filename
-        fn, fe = os.path.splitext(filename)
-        zip_path = os.path.join(set_path, filename)
-
-        with open(zip_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(set_path)
-            util.remove_ignore_files_and_directories()
-
-        os.remove(zip_path)
-        file_path = os.path.join(set_path, fn)
-
-        complete = True
-        if not util.contains_extension(file_path, ".63"):
-            complete = False
-        if not util.contains_extension(file_path, ".64"):
-            complete = False
-        if not util.contains_extension(file_path, ".14"):
-            complete = False
-        if not complete:
-            raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
-
-        status = controllers.api_handlers[config.API_FS_RESOURCE_HYDRODYNAMIC](
-            request_json["segment"],
-            request_json["year"],
-            request_json["set"],
-            fn,
-            request_json["temp"],
-            boundary_path,
-        )
-        if status == 200:
-            return {"directory": f"hydrodynamic/{segment}/{year}/{set}/{fn}/"}
-    else:
+    set_path = os.path.join(config.DIR_RESOURCE_HYDRODYNAMIC, segment, year, set_name)
+    os.makedirs(set_path, exist_ok=True)
+    if not file.filename or not allowed_file(file.filename):
         raise HTTPException(status_code=400, detail="File Type Not Allowed")
-
-
-@api_router.get("/fs/usage", response_model=DiskUsageResponse)
-async def get_disk_usage():
-    response = controllers.api_handlers[config.API_FS_DISK_USAGE]()
-    return DiskUsageResponse(**response)
-
-
-@api_router.get(
-    "/fs/resource/hydrodynamic/list", response_model=HydrodynamicListResponse
-)
-async def get_hydrodynamic_resource_list():
-    response = controllers.api_handlers[config.API_FS_RESOURCE_HYDRODYNAMIC_LIST]()
-    return HydrodynamicListResponse(**response)
-
-
-######################################## API for Bank Workflow (重构版) ########################################
-
-
-@api_router.post("/bank/banks", response_model=BanksCreateResponse)
-async def create_banks(request: BanksCreateRequest):
-    status, response = controllers.bank_workflow_handlers["create_banks"](
-        request.dict()
-    )
-    if status == 200:
-        return BanksCreateResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
+    root_name, _ = os.path.splitext(file.filename)
+    zip_path = os.path.join(set_path, file.filename)
+    with open(zip_path, "wb") as buffer:
+        buffer.write(await file.read())
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(set_path)
+        util.remove_ignore_files_and_directories()
+    os.remove(zip_path)
+    file_path = os.path.join(set_path, root_name)
+    if not all(
+        util.contains_extension(file_path, ext) for ext in [".63", ".64", ".14"]
+    ):
+        raise HTTPException(status_code=400, detail="Files Provided Are Incomplete")
+    return controllers.upload_hydrodynamic_resource(
+        {
+            "segment": segment,
+            "year": year,
+            "set": set_name,
+            "name": root_name,
+            "temp": request_json["temp"],
+            "boundary": boundary_path,
+        }
     )
 
 
-@api_router.get("/bank/banks")
-async def get_banks(region_code: Optional[str] = None):
-    status, response = controllers.bank_workflow_handlers["get_banks"](region_code)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
+@api_router.get(f"{config.API_FS_DISK_USAGE}")
+async def get_disk_usage() -> dict[str, Any]:
+    return controllers.get_disk_usage()
 
 
-@api_router.get("/bank/banks/{bank_id}")
-async def get_bank(bank_id: str):
-    status, response = controllers.bank_workflow_handlers["get_bank"](bank_id)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
+@api_router.get(f"{config.API_FS_RESOURCE_HYDRODYNAMIC_LIST}")
+async def get_hydrodynamic_resource_list() -> dict[str, Any]:
+    return controllers.get_hydrodynamic_resource_list()
 
 
-@api_router.put("/bank/banks/{bank_id}")
-async def update_bank(bank_id: str, request: BankUpdate):
-    status, response = controllers.bank_workflow_handlers["update_bank"](
-        bank_id, request.dict(exclude_none=True)
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.delete("/bank/banks/{bank_id}", response_model=GenericSuccessResponse)
-async def delete_bank(bank_id: str):
-    status, response = controllers.bank_workflow_handlers["delete_bank"](bank_id)
-    if status == 200:
-        return GenericSuccessResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/bank/tasks", response_model=TasksCreateResponse)
-async def create_tasks(request: TasksCreateRequest):
-    status, response = controllers.bank_workflow_handlers["create_tasks"](
-        request.dict()
-    )
-    if status == 200:
-        return TasksCreateResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/tasks")
-async def get_tasks():
-    status, response = controllers.bank_workflow_handlers["get_tasks"]()
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/tasks/{task_id}")
-async def get_task(task_id: str):
-    status, response = controllers.bank_workflow_handlers["get_task"](task_id)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.delete("/bank/tasks/{task_id}", response_model=GenericSuccessResponse)
-async def delete_task(task_id: str):
-    status, response = controllers.bank_workflow_handlers["delete_task"](task_id)
-    if status == 200:
-        return GenericSuccessResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.put("/bank/tasks/{task_id}/status")
-async def update_task_status(task_id: str, request: TaskStatusUpdate):
-    status, response = controllers.bank_workflow_handlers["update_task_status"](
-        task_id, request.dict(exclude_none=True)
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/bank/tasks/{task_id}/run")
-async def run_task(task_id: str):
-    status, response = controllers.bank_workflow_handlers["run_task"](task_id)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/bank/basic-params", response_model=BasicParamsCreateResponse)
-async def create_basic_params(request: BasicParamsCreateRequest):
-    status, response = controllers.bank_workflow_handlers["create_basic_params"](
-        request.dict()
-    )
-    if status == 200:
-        return BasicParamsCreateResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/basic-params")
-async def get_basic_params():
-    status, response = controllers.bank_workflow_handlers["get_basic_params"]()
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/basic-params/{param_id}")
-async def get_basic_param(param_id: str):
-    status, response = controllers.bank_workflow_handlers["get_basic_param"](param_id)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.put("/bank/basic-params/{param_id}")
-async def update_basic_param(param_id: str, request: BasicParamUpdate):
-    status, response = controllers.bank_workflow_handlers["update_basic_param"](
-        param_id, request.dict(exclude_none=True)
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/bank/sections", response_model=CrossSectionsCreateResponse)
-async def create_sections(request: CrossSectionsCreateRequest):
-    status, response = controllers.bank_workflow_handlers["create_sections"](
-        request.dict()
-    )
-    if status == 200:
-        return CrossSectionsCreateResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/sections")
-async def get_sections(task_id: Optional[str] = None, bank_id: Optional[str] = None):
-    status, response = controllers.bank_workflow_handlers["get_sections"](
-        task_id, bank_id
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/sections/{section_id}")
-async def get_section(section_id: str):
-    status, response = controllers.bank_workflow_handlers["get_section"](section_id)
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.delete("/bank/sections/{section_id}", response_model=GenericSuccessResponse)
-async def delete_section(section_id: str):
-    status, response = controllers.bank_workflow_handlers["delete_section"](section_id)
-    if status == 200:
-        return GenericSuccessResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.put("/bank/sections/{section_id}")
-async def update_section(section_id: str, request: CrossSectionUpdate):
-    status, response = controllers.bank_workflow_handlers["update_section"](
-        section_id, request.dict(exclude_none=True)
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/tasks/{task_id}/full", response_model=FullTaskDataResponse)
-async def get_full_task(task_id: str):
-    status, response = controllers.bank_workflow_handlers["get_full_task"](task_id)
-    if status == 200:
-        return FullTaskDataResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.delete("/bank/tasks/{task_id}/clear", response_model=ClearTaskResponse)
-async def clear_task(task_id: str):
-    status, response = controllers.bank_workflow_handlers["clear_task"](task_id)
-    if status == 200:
-        return ClearTaskResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/results", response_model=BankRiskResultsResponse)
-async def get_bank_risk_results(
-    task_id: Optional[str] = None,
-    bank_id: Optional[str] = None,
-    region_code: Optional[str] = None,
-):
-    status, response = controllers.bank_workflow_handlers["get_bank_risk_results"](
-        task_id=task_id,
-        bank_id=bank_id,
-        region_code=region_code,
-    )
-    if status == 200:
-        return BankRiskResultsResponse(**response)
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.get("/bank/results/{result_id}")
-async def get_bank_risk_result(result_id: int):
-    status, response = controllers.bank_workflow_handlers["get_bank_risk_result"](
-        result_id
-    )
-    if status == 200:
-        return response
-    raise HTTPException(
-        status_code=status, detail=response.get("error", "Unknown error")
-    )
-
-
-@api_router.post("/tasks/{task_id}/execute")
-async def execute_task(task_id: str):
-    """
-    Execute a task (run risk analysis for all sections)
-    """
-    status, response = controllers.handle_execute_task(task_id)
-    if status == 200:
-        return SuccessResponse(message=response.get("message"), status_code=200)
-    raise HTTPException(status_code=400, detail=response.get("error"))
-
-
-######################################## API for Models ########################################
-
-
-@api_router.get("/{category}/{model_name}")
-async def get_model_runner(category: str, model_name: str, request: Request):
+@api_router.get(f"{config.API_VERSION}" + "/{category}/{model_name}")
+async def get_model_runner(
+    category: str, model_name: str, request: Request
+) -> dict[str, Any]:
     api_path = f"{config.API_VERSION}/{category}/{model_name}"
-
-    if api_path in controllers.api_handlers:
-        request_json = dict(request.query_params)
-        status, response = controllers.api_handlers[api_path](request_json)
-        if status == 200:
-            return response
-        raise HTTPException(status_code=status, detail=str(response))
-
-    query_params = dict(request.query_params)
-    status, response = controllers.handle_model_runner(api_path, query_params)
-    if status == 200:
-        return response
-    raise HTTPException(status_code=status, detail=str(response))
-
-
-@api_router.post("/{category}/{model_name}")
-async def post_model_runner(category: str, model_name: str, request: Request):
-    api_path = f"{config.API_VERSION}/{category}/{model_name}"
-
-    form_data = await request.form()
     try:
-        json_data = await request.json()
-    except:
-        json_data = None
+        return controllers.handle_model_runner(api_path, dict(request.query_params))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    request_json = {}
-    if json_data:
-        request_json.update(json_data)
 
-    files = {}
-    if form_data:
+@api_router.post(f"{config.API_VERSION}" + "/{category}/{model_name}")
+async def post_model_runner(
+    category: str, model_name: str, request: Request
+) -> dict[str, Any]:
+    api_path = f"{config.API_VERSION}/{category}/{model_name}"
+    request_json: dict[str, Any] = {}
+    try:
+        request_json.update(await request.json())
+    except Exception:
+        pass
+    try:
+        form_data = await request.form()
         for key, value in form_data.items():
-            if isinstance(value, UploadFile):
-                files[key] = value
-            else:
+            if not isinstance(value, UploadFile):
                 request_json[key] = value
-
-    if api_path in controllers.api_handlers:
-        status, response = controllers.api_handlers[api_path](request_json)
-        if status == 200:
-            return response
-        raise HTTPException(status_code=status, detail=str(response))
-
-    if files:
-        request_json.update(
-            {f"file_{key}": file.filename for key, file in files.items()}
-        )
-
-    status, response = controllers.handle_model_runner(api_path, request_json)
-    if status == 200:
-        return response
-    raise HTTPException(status_code=status, detail=str(response))
+    except Exception:
+        pass
+    try:
+        return controllers.handle_model_runner(api_path, request_json)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

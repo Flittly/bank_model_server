@@ -14,6 +14,9 @@ from osgeo import ogr, osr
 import re
 import util
 from util import db_ops
+from modelResource.numericalModel.flowFieldVelocity import (
+    get_hydrodynamic_series_by_coordinate,
+)
 
 
 def get_mapped_tidal_level_and_mapped_water_qs(
@@ -123,76 +126,9 @@ def compute_anti_impact_speed(result, risk_threshold):
     return Ky, risk
 
 
-def geo2proj(lng, lat, EPSG=4326):
-    source = osr.SpatialReference()
-    source.ImportFromEPSG(EPSG)
-
-    target = osr.SpatialReference()
-    target.ImportFromEPSG(2437)
-
-    transform = osr.CoordinateTransformation(source, target)
-
-    point = ogr.Geometry(ogr.wkbPoint)
-    point.AddPoint(lat, lng)
-
-    point.Transform(transform)
-
-    lat_prj, lng_prj = point.GetX(), point.GetY()
-
-    return lng_prj, lat_prj
-
-
-def get_flow_field_velocity(raw_paths, lng, lat):
-    _lng = float(lng)
-    _lat = float(lat)
-
-    lng_prj = 0.0
-    lat_prj = 0.0
-    if _lng <= 180.0 and _lat <= 180.0:
-        lng_prj, lat_prj = geo2proj(_lng, _lat)
-    elif _lng > 10000000.0:
-        lng_prj, lat_prj = geo2proj(_lng, _lat, 3857)
-    else:
-        lng_prj = _lng
-        lat_prj = _lat
-
-    min_distance = float("inf")
-    us = []
-    vs = []
-    index = 0
-
-    # 从第一个时间点中找到距离最近点的索引
-    with open(os.path.join(config.DIR_RESOURCE, raw_paths[0]), "r") as file:
-        # 跳过前两行
-        for _ in range(2):
-            next(file)
-
-        # 从第三行开始处理
-        for line_index, line in enumerate(file, start=2):
-            parts = line.split()
-            # 提取坐标和数据
-            coords = (float(parts[0]), float(parts[1]))
-            distance = util.calculate_distance(lng_prj, lat_prj, coords[0], coords[1])
-            # 检查是否是最近的坐标
-            if distance < min_distance:
-                min_distance = distance
-                index = line_index
-
-    # 遍历所有时间点，根据索引找到对应点，获取u,v
-    for i in range(26):
-        path = os.path.join(config.DIR_RESOURCE, raw_paths[i])
-        with open(path, "r") as file:
-            # 跳过前两行
-            for _ in range(2):
-                next(file)
-
-            # 从第三行开始处理
-            for line_index, line in enumerate(file, start=2):
-                if line_index == index:
-                    parts = line.split()
-                    us.append(float(parts[-2]))
-                    vs.append(float(parts[-1]))
-
+def get_flow_field_velocity(series):
+    us = [float(item.get("u") or 0.0) for item in series]
+    vs = [float(item.get("v") or 0.0) for item in series]
     return {"us": us, "vs": vs}
 
 
@@ -212,14 +148,10 @@ def run_anti_impact_speed_mcr(mcr: model.ModelCaseReference):
         slope_foot = points_v[slope_foot_index]
         # slope_foot = data['points'][data['deepest_index']]
 
-    flow_field_velocity_json = {
-        "case-id": hydrodynamic_mcr.id,
-        "lng": slope_foot[0],
-        "lat": slope_foot[1],
-    }
-
-    raw_paths = hydrodynamic_mcr.make_response()["raw-txts"]
-    result = get_flow_field_velocity(raw_paths, slope_foot[0], slope_foot[1])
+    series = get_hydrodynamic_series_by_coordinate(
+        hydrodynamic_mcr, slope_foot[0], slope_foot[1]
+    )
+    result = get_flow_field_velocity(series)
 
     # flow_field_velocity_mcr = model.ModelCaseReference.create(config.API_NM_FLOW_FIELD_VELOCITY, flow_field_velocity_json, 'Flow-Field Velocity', '/Users/soku/Desktop/bank_model_service/BankModel_Service/resource/model/a323cc8a6d31420c6c26d96d6b68e4e6/a323cc8a6d31420c6c26d96d6b68e4e6.cpython-311.pyc')
     # flow_field_velocity_mcr.update_status(config.STATUS_LOCK)

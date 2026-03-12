@@ -94,18 +94,20 @@ def run_hydrodynamic_mcr(mcr: model.ModelCaseReference):
     name = mcr.request_json["water-qs"] + mcr.request_json["tidal-level"]
     mapped_path = f"hydrodynamic/{segment}/{year}/{set}/{name}"
 
-    raw_output_path = f"{mapped_path}/raw/"
     visualization_output_path = f"{mapped_path}/renderResource/"
 
-    content = []
     bin_content = []
     for i in range(26):
-        content.append(os.path.join(raw_output_path, f"{i}.txt"))
         bin_content.append(os.path.join(visualization_output_path, f"uv_{i}.bin"))
 
     return {
         "case-id": mcr.id,
-        "raw-txts": content,
+        "segment": segment,
+        "year": year,
+        "set": set,
+        "water-qs": mcr.request_json["water-qs"],
+        "tidal-level": mcr.request_json["tidal-level"],
+        "data-source": "database",
         "visualization-uv-bin": bin_content,
         "visualization-station-bin": os.path.join(
             visualization_output_path, "station.bin"
@@ -165,7 +167,12 @@ def RESPONSING(
     return core_mcr.make_response(
         {
             "case-id": "TEMPLATE",
-            "raw-txts": "NONE",
+            "segment": "NONE",
+            "year": "NONE",
+            "set": "NONE",
+            "water-qs": "NONE",
+            "tidal-level": "NONE",
+            "data-source": "NONE",
             "visualization-uv-bin": "NONE",
             "visualization-station-bin": "NONE",
             "visualization-description-json": "NONE",

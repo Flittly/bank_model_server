@@ -10,29 +10,36 @@ import model
 import config
 from osgeo import ogr, osr
 import util
+from util import db_ops
+
 
 def geo2proj(lng, lat, EPSG=4326):
-    
     source = osr.SpatialReference()
     source.ImportFromEPSG(EPSG)
-    
+
     target = osr.SpatialReference()
     target.ImportFromEPSG(2437)
-    
+
     transform = osr.CoordinateTransformation(source, target)
-    
+
     point = ogr.Geometry(ogr.wkbPoint)
     point.AddPoint(lat, lng)
-    
+
     point.Transform(transform)
-    
+
     lat_prj, lng_prj = point.GetX(), point.GetY()
-    
+
     return lng_prj, lat_prj
 
 
-def get_flow_field_velocity(raw_paths, lng, lat):
-    
+def get_flow_field_velocity(series, lng, lat):
+    us = [float(item.get("u") or 0.0) for item in series]
+    vs = [float(item.get("v") or 0.0) for item in series]
+
+    return {"us": us, "vs": vs}
+
+
+def get_hydrodynamic_series_by_coordinate(hydrodynamic_mcr, lng, lat):
     _lng = float(lng)
     _lat = float(lat)
 
@@ -46,117 +53,89 @@ def get_flow_field_velocity(raw_paths, lng, lat):
         lng_prj = _lng
         lat_prj = _lat
 
-    min_distance = float('inf')
-    us = []
-    vs = []
-    index = 0
+    nearest_point = db_ops.get_nearest_hydrodynamic_point(
+        region_code=hydrodynamic_mcr.request_json["segment"],
+        set_name=hydrodynamic_mcr.request_json["set"],
+        water_qs=hydrodynamic_mcr.request_json["water-qs"],
+        tidal_level=hydrodynamic_mcr.request_json["tidal-level"],
+        x=lng_prj,
+        y=lat_prj,
+    )
+    if not nearest_point:
+        raise ValueError("No nearest hydrodynamic point found in database")
 
-    # 从第一个时间点中找到距离最近点的索引
-    with open(os.path.join(config.DIR_RESOURCE, raw_paths[0]), 'r') as file:
-        # 跳过前两行
-        for _ in range(2):
-            next(file)
-
-        # 从第三行开始处理
-        for line_index, line in enumerate(file, start=2):
-            parts = line.split()
-            # 提取坐标和数据
-            coords = (float(parts[0]), float(parts[1]))
-            distance = util.calculate_distance(lng_prj, lat_prj, coords[0], coords[1])
-            # 检查是否是最近的坐标
-            if distance < min_distance:
-                min_distance = distance
-                index = line_index
-    
-    # 遍历所有时间点，根据索引找到对应点，获取u,v
-    for i in range(26):
-        path = os.path.join(config.DIR_RESOURCE, raw_paths[i])
-        with open(path, 'r') as file:
-            # 跳过前两行
-            for _ in range(2):
-                next(file)
-
-            # 从第三行开始处理
-            for line_index, line in enumerate(file, start=2):
-                if line_index == index:
-                    parts = line.split()
-                    us.append(float(parts[-2]))
-                    vs.append(float(parts[-1]))
+    return db_ops.get_hydrodynamic_series(nearest_point["id"])
 
 
-    return {
-        "us": us,
-        "vs": vs
-    }
-    
 ##########################################################################################
+
 
 @model.model_status_controller_sync
 def run_flow_field_velocity_mcr(mcr: model.ModelCaseReference):
+    hydrodynamic_mcr = model.ModelCaseReference.open_case(mcr.request_json["case-id"])
+    lng = mcr.request_json["lng"]
+    lat = mcr.request_json["lat"]
 
-    hydrodynamic_mcr = model.ModelCaseReference.open_case(mcr.request_json['case-id'])
-    lng = mcr.request_json['lng']
-    lat = mcr.request_json['lat']
-    
-    # raw_path = os.path.join(hydrodynamic_mcr.directory, 'result', 'raw')
-    raw_paths = hydrodynamic_mcr.make_response()['raw-txts']
+    series = get_hydrodynamic_series_by_coordinate(hydrodynamic_mcr, lng, lat)
+    result = get_flow_field_velocity(series, lng, lat)
 
-    result = get_flow_field_velocity(raw_paths, lng, lat)
+    return {"case-id": mcr.id, "result": result}
 
-    return {
-        'case-id': mcr.id,
-        'result': result
-    }
 
 @model.model_status_controller_sync
 def run_flow_field_velocities_mcr(mcr: model.ModelCaseReference):
-
-    hydrodynamic_mcr = model.ModelCaseReference.open_case(mcr.request_json['case-id'])
-    sample_points = mcr.request_json['sample-points']
-    
-    # raw_path = os.path.join(hydrodynamic_mcr.directory, 'result', 'raw')
-    raw_paths = hydrodynamic_mcr.make_response()['raw-txts']
+    hydrodynamic_mcr = model.ModelCaseReference.open_case(mcr.request_json["case-id"])
+    sample_points = mcr.request_json["sample-points"]
 
     result = []
     for sample_point in sample_points:
-        lng = sample_point['lng']
-        lat = sample_point['lat']
-        result.append(get_flow_field_velocity(raw_paths, lng, lat))
+        lng = sample_point["lng"]
+        lat = sample_point["lat"]
+        series = get_hydrodynamic_series_by_coordinate(hydrodynamic_mcr, lng, lat)
+        result.append(get_flow_field_velocity(series, lng, lat))
 
-    return {
-        'case-id': mcr.id,
-        'result': result
-    }
-    
+    return {"case-id": mcr.id, "result": result}
+
+
 ##########################################################################################
 
-NAME = 'Flow-Field Velocity'
+NAME = "Flow-Field Velocity"
 
-CATEGORY = 'Numerical Model'
+CATEGORY = "Numerical Model"
 
-CATEGORY_ALIAS = 'nm'
- 
-def PARSING(self, request_json: dict, model_path: str, other_dependent_ids: list[str]=[]):
-    
-    flow_field_velocity_mcr = model.ModelCaseReference.create(config.API_NM_FLOW_FIELD_VELOCITY, request_json, NAME, model_path, other_dependent_ids)
-    
+CATEGORY_ALIAS = "nm"
+
+
+def PARSING(
+    self, request_json: dict, model_path: str, other_dependent_ids: list[str] = []
+):
+    flow_field_velocity_mcr = model.ModelCaseReference.create(
+        config.API_NM_FLOW_FIELD_VELOCITY,
+        request_json,
+        NAME,
+        model_path,
+        other_dependent_ids,
+    )
+
     return [flow_field_velocity_mcr]
 
-def RESPONSING(self, core_mcr: model.ModelCaseReference, default_pre_mcrs: list[model.ModelCaseReference], other_pre_mcrs: list[model.ModelCaseReference]):
-    
-    return core_mcr.make_response({
-                                    'case-id': 'TEMPLATE',
-                                    'result': 'NONE'
-                                })
-    
+
+def RESPONSING(
+    self,
+    core_mcr: model.ModelCaseReference,
+    default_pre_mcrs: list[model.ModelCaseReference],
+    other_pre_mcrs: list[model.ModelCaseReference],
+):
+    return core_mcr.make_response({"case-id": "TEMPLATE", "result": "NONE"})
+
+
 ##########################################################################################
 
-if __name__ == '__main__':
-    
-    v1 = sys.argv[1]    # flow_field_velocity_mcr
-    
+if __name__ == "__main__":
+    v1 = sys.argv[1]  # flow_field_velocity_mcr
+
     flow_field_velocity_mcr = model.ModelCaseReference.open_case(v1)
-    
+
     if not "sample-points" in flow_field_velocity_mcr.request_json:
         run_flow_field_velocity_mcr(flow_field_velocity_mcr)
     else:

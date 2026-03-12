@@ -13,6 +13,9 @@ from math import sqrt, exp
 import re
 import util
 from util import db_ops
+from modelResource.numericalModel.flowFieldVelocity import (
+    get_hydrodynamic_series_by_coordinate,
+)
 
 
 def get_mapped_tidal_level_and_mapped_water_qs(
@@ -206,45 +209,15 @@ def run_water_level_fluctuation_mcr(mcr: model.ModelCaseReference):
         slope_foot_index = data.get("slope_foot_index")
         slope_foot = points_v[slope_foot_index]
 
-    min_distance = float("inf")
-    raw_paths = hydrodynamic_mcr.make_response()["raw-txts"]
-
-    # 从第一个时间点中找到距离最近点的索引
-    with open(os.path.join(config.DIR_RESOURCE, raw_paths[0]), "r") as file:
-        # 跳过前两行
-        for _ in range(2):
-            next(file)
-
-        # 从第三行开始处理
-        for line_index, line in enumerate(file, start=2):
-            parts = line.split()
-            # 提取坐标和数据
-            coords = (float(parts[0]), float(parts[1]))
-            distance = util.calculate_distance(
-                slope_foot[0], slope_foot[1], coords[0], coords[1]
-            )
-            # 检查是否是最近的坐标
-            if distance < min_distance:
-                min_distance = distance
-                index = line_index
-
+    series = get_hydrodynamic_series_by_coordinate(
+        hydrodynamic_mcr, slope_foot[0], slope_foot[1]
+    )
     p = []
     Z = 0
-    # 遍历所有时间点，根据索引找到对应点，获取u,v
-    for i in range(26):
-        path = os.path.join(config.DIR_RESOURCE, raw_paths[i])
-        with open(path, "r") as file:
-            # 跳过前两行
-            for _ in range(2):
-                next(file)
-
-            # 从第三行开始处理
-            for line_index, line in enumerate(file, start=2):
-                if line_index == index:
-                    parts = line.split()
-                    p.append(float(parts[3]))
-                    if Z == 0:
-                        Z = float(parts[2])
+    for item in series:
+        p.append(float(item.get("p") or 0.0))
+        if Z == 0:
+            Z = float(item.get("h") or 0.0)
 
     risk_threshold = mcr.request_json["risk-threshold"]
 

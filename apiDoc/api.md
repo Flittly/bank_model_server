@@ -986,10 +986,14 @@ POST /v0/nm/hydrodynamic
 ```json
 {
     "case-id": "{ case-id }",
-  	"model": "{ model-name }",
-    "raw-txts": [ "{ file-name }" ] || "NONE",
-  	"visualization-uv-bin": [ "{ file-name }" ] || "NONE",
-  	"visualization-station-bin": "{ file-name }" || "NONE",
+   	"segment": "{ segment-name }" || "NONE",
+   	"year": "{ YYYY }" || "NONE",
+   	"set": "{ set-name }" || "NONE",
+   	"water-qs": "{ number-water-qs }" || "NONE",
+   	"tidal-level": "{ number-tidal-difference }" || "dc" || "zc" || "xc" || "NONE",
+   	"data-source": "database" || "NONE",
+   	"visualization-uv-bin": [ "{ file-name }" ] || "NONE",
+   	"visualization-station-bin": "{ file-name }" || "NONE",
     "visualization-description-json": "{ file-name }" || "NONE"
 }
 ```

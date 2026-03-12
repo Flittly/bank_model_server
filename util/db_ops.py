@@ -969,6 +969,56 @@ def get_available_hydrodynamic_nodes(
         return [int(row["water_qs"]) for row in rows]
 
 
+def get_nearest_hydrodynamic_point(
+    region_code: str,
+    set_name: str,
+    water_qs: str,
+    tidal_level: str,
+    x: float,
+    y: float,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get the nearest non-temp hydrodynamic point for a condition.
+    """
+    with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
+        cursor.execute(
+            """
+            SELECT
+                hp.*,
+                ST_AsGeoJSON(hp.geom)::jsonb as geometry,
+                ((hp.x - %s) * (hp.x - %s) + (hp.y - %s) * (hp.y - %s)) AS distance_sq
+            FROM hydrodynamic_points hp
+            WHERE hp.region_code = %s
+              AND hp.set_name = %s
+              AND hp.water_qs = %s
+              AND hp.tidal_level = %s
+              AND hp.temp = FALSE
+            ORDER BY distance_sq ASC, hp.id ASC
+            LIMIT 1
+            """,
+            (x, x, y, y, region_code, set_name, water_qs, tidal_level),
+        )
+        result = cursor.fetchone()
+        return result if result else None
+
+
+def get_hydrodynamic_series(point_id_db: int) -> List[Dict[str, Any]]:
+    """
+    Get full hydrodynamic time series for a point.
+    """
+    with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
+        cursor.execute(
+            """
+            SELECT time_step, h, p, u, v
+            FROM hydrodynamic_data
+            WHERE point_id = %s
+            ORDER BY time_step
+            """,
+            (point_id_db,),
+        )
+        return cursor.fetchall()
+
+
 def create_hydrodynamic_data(
     point_id_db: int,
     time_step: int,

@@ -444,7 +444,7 @@ def update_basic_param(param_id: str, **kwargs) -> bool:
 
 
 def create_cross_section(
-    task_id_db: int,
+    task_id: str,
     section_id: str,
     section_name: str,
     bank_id: str,
@@ -510,7 +510,7 @@ def create_cross_section(
             RETURNING id
             """,
             (
-                task_id_db,
+                task_id,
                 section_id,
                 section_name,
                 bank_id,
@@ -544,7 +544,7 @@ def create_cross_section(
 
 
 def get_cross_sections(
-    task_id_db: Optional[int] = None,
+    task_id: Optional[str] = None,
     bank_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -554,18 +554,17 @@ def get_cross_sections(
         query = """
             SELECT 
                 cs.*,
-                t.task_id,
                 t.task_name,
                 ST_AsGeoJSON(cs.geom)::jsonb as geometry
             FROM cross_sections cs
-            JOIN tasks t ON cs.task_id = t.id
+            JOIN tasks t ON cs.task_id = t.task_id
         """
         params = []
 
         conditions = []
-        if task_id_db is not None:
+        if task_id is not None:
             conditions.append("cs.task_id = %s")
-            params.append(task_id_db)
+            params.append(task_id)
         if bank_id is not None:
             conditions.append("cs.bank_id = %s")
             params.append(bank_id)
@@ -588,11 +587,10 @@ def get_cross_section(section_id: str) -> Optional[Dict[str, Any]]:
             """
             SELECT 
                 cs.*,
-                t.task_id,
                 t.task_name,
                 ST_AsGeoJSON(cs.geom)::jsonb as geometry
             FROM cross_sections cs
-            JOIN tasks t ON cs.task_id = t.id
+            JOIN tasks t ON cs.task_id = t.task_id
             WHERE cs.section_id = %s
             """,
             (section_id,),
@@ -679,11 +677,9 @@ def get_full_task_data(task_id: str) -> Optional[Dict[str, Any]]:
     if not task:
         return None
 
-    task_id_db = task["id"]
-
     return {
         "task": task,
-        "sections": get_cross_sections(task_id_db=task_id_db),
+        "sections": get_cross_sections(task_id=task_id),
     }
 
 
@@ -695,15 +691,11 @@ def clear_task_data(task_id: str) -> Optional[Dict[str, int]]:
     if not task:
         return None
 
-    task_id_db = task["id"]
-
     with db.get_db_cursor() as (conn, cursor):
-        cursor.execute(
-            "DELETE FROM bank_risk_results WHERE task_id = %s", (task_id_db,)
-        )
+        cursor.execute("DELETE FROM bank_risk_results WHERE task_id = %s", (task_id,))
         results_deleted = cursor.rowcount
 
-        cursor.execute("DELETE FROM cross_sections WHERE task_id = %s", (task_id_db,))
+        cursor.execute("DELETE FROM cross_sections WHERE task_id = %s", (task_id,))
         sections_deleted = cursor.rowcount
 
         # Note: basic_params are not deleted as they might be reused
@@ -762,15 +754,6 @@ def get_sections_by_task(task_id: str) -> List[Dict[str, Any]]:
     Get all sections for a specific task
     """
     with db.get_db_cursor(dict_cursor=True) as (conn, cursor):
-        # First get the internal task id
-        cursor.execute("SELECT id FROM tasks WHERE task_id = %s", (task_id,))
-        task = cursor.fetchone()
-        if not task:
-            return []
-
-        internal_task_id = task["id"]
-
-        # Then get sections
         cursor.execute(
             """
             SELECT 
@@ -779,7 +762,7 @@ def get_sections_by_task(task_id: str) -> List[Dict[str, Any]]:
             FROM cross_sections s
             WHERE s.task_id = %s
             """,
-            (internal_task_id,),
+            (task_id,),
         )
         return cursor.fetchall()
 
@@ -961,12 +944,11 @@ def get_available_hydrodynamic_nodes(
               AND set_name = %s
               AND tidal_level = %s
               AND temp = FALSE
-            ORDER BY water_qs::INTEGER
             """,
             (region_code, set_name, tidal_level),
         )
         rows = cursor.fetchall()
-        return [int(row["water_qs"]) for row in rows]
+        return sorted((int(row["water_qs"]) for row in rows))
 
 
 def get_nearest_hydrodynamic_point(

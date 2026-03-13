@@ -31,16 +31,43 @@ def model_status_controller_sync(func):
 
         # Run
         try:
+            mcr.set_runtime(
+                stage="starting",
+                progress=5,
+                message="Model execution is starting",
+                status="running",
+            )
+            mcr.append_event("info", "Model execution started", stage="starting")
             mcr.update_status(config.STATUS_LOCK | config.STATUS_RUNNING)
+            mcr.set_runtime(
+                stage="running",
+                progress=30,
+                message="Model code is running",
+                status="running",
+            )
             result = func(mcr, *args, **kwargs)
+            mcr.set_runtime(
+                stage="writing_response",
+                progress=90,
+                message="Writing model response",
+                status="running",
+            )
             mcr.make_response(result)
             mcr.update_status(config.STATUS_UNLOCK | config.STATUS_COMPLETE)
+            mcr.set_runtime(
+                stage="completed",
+                progress=100,
+                message="Model execution completed",
+                status="completed",
+            )
+            mcr.append_event("info", "Model execution completed", stage="completed")
             util.update_size(
                 config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(mcr.directory)
             )
             return
 
         except Exception as e:
+            mcr.mark_error(e)
             mcr.update_status(config.STATUS_UNLOCK | config.STATUS_ERROR, e, "w")
             util.update_size(
                 config.DIR_STORAGE_LOG, util.get_folder_size_in_gb(mcr.directory)
@@ -292,23 +319,42 @@ class ModelLauncher:
         compile_model_script_to_pyc(api, script_path)
 
     def run(self, request_json: dict, other_dependent_ids: list[str] = []) -> MCR:
+        print(
+            f"[launcher] start api={self.api} model={self.name} request={request_json} deps={other_dependent_ids}",
+            flush=True,
+        )
         other_pre_mcrs: list[MCR] = cast(
             list[MCR],
             [mcr for id in other_dependent_ids if (mcr := MCR.open_case(id))],
         )
-        default_pre_mcrs: list[MCR] = cast(
-            list[MCR],
-            self.parse(request_json, self.program_path, other_dependent_ids),
-        )
+        try:
+            default_pre_mcrs: list[MCR] = cast(
+                list[MCR],
+                self.parse(request_json, self.program_path, other_dependent_ids),
+            )
+        except Exception as exc:
+            print(
+                f"[launcher] parse failed api={self.api} model={self.name} error={exc} request={request_json}",
+                flush=True,
+            )
+            raise
         if not default_pre_mcrs:
             raise RuntimeError(f"Model '{self.api}' did not create a core case")
 
         mcrs: list[MCR] = other_pre_mcrs + default_pre_mcrs
         core_mcr: MCR = mcrs[-1]
+        print(
+            f"[launcher] parsed api={self.api} core_case={core_mcr.id} all_cases={[m.id for m in mcrs]}",
+            flush=True,
+        )
 
         if core_mcr.find_status(config.STATUS_COMPLETE) or core_mcr.find_status(
             config.STATUS_ERROR
         ):
+            print(
+                f"[launcher] skip api={self.api} core_case={core_mcr.id} status={core_mcr.get_status()}",
+                flush=True,
+            )
             return core_mcr
 
         # Check whether core model case is valid for running
@@ -316,9 +362,22 @@ class ModelLauncher:
             # Launch model
             command = [self.program_path] + [mcr.id for mcr in mcrs]
             Process_Queue().put(command)
+            print(
+                f"[launcher] queued api={self.api} core_case={core_mcr.id} command={command}",
+                flush=True,
+            )
 
             # Make default response
             self.response(default_pre_mcrs[-1], default_pre_mcrs[:-1], other_pre_mcrs)
+            print(
+                f"[launcher] response prepared api={self.api} core_case={core_mcr.id}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[launcher] checker blocked api={self.api} core_case={core_mcr.id} status={core_mcr.get_status()}",
+                flush=True,
+            )
 
         return core_mcr
 

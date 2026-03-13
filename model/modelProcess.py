@@ -59,17 +59,35 @@ def daemon_process(process_queue: queue.Queue[any]):
     def try_to_run_case(command):
         id = command[-1]
         update_task_queue()
+        mcr = MCR.open_case(id)
 
         if (
             len(task_queue) <= config.MAX_RUNNING_MODEL_CASE_NUM
             and id not in task_queue
         ):
             task_queue.add(id)
+            if mcr is not None:
+                mcr.set_runtime(
+                    stage="launching",
+                    progress=20,
+                    message="Launching model subprocess",
+                    status="running",
+                )
+                mcr.append_event(
+                    "info", "Launching model subprocess", stage="launching"
+                )
             command.insert(0, sys.executable)
 
             subprocess.Popen(command)
             return True
         else:
+            if mcr is not None:
+                mcr.set_runtime(
+                    stage="waiting_slot",
+                    progress=10,
+                    message="Waiting for an available execution slot",
+                    status="pending",
+                )
             return False
 
     # Return 0: False, 1: True, 2: Error
@@ -87,6 +105,21 @@ def daemon_process(process_queue: queue.Queue[any]):
             current_status = mcr.get_status()
             if (current_status & config.STATUS_ERROR) == config.STATUS_ERROR:
                 error_log = MCR.get_simplified_error_log(core_mcr_id)
+                core_mcr = MCR.open_case(core_mcr_id)
+                if core_mcr is not None:
+                    core_mcr.set_runtime(
+                        stage="dependency_error",
+                        progress=100,
+                        message="A dependent case failed",
+                        status="error",
+                        meta={"dependency-case-id": id, "dependency-error": error_log},
+                    )
+                    core_mcr.append_event(
+                        "error",
+                        f"Dependent case failed: {id}",
+                        stage="dependency_error",
+                        meta={"dependency-error": error_log},
+                    )
 
                 MCR.update_case_status(
                     core_mcr_id,
@@ -98,6 +131,15 @@ def daemon_process(process_queue: queue.Queue[any]):
                 break
 
             if (current_status & config.STATUS_COMPLETE) != config.STATUS_COMPLETE:
+                core_mcr = MCR.open_case(core_mcr_id)
+                if core_mcr is not None:
+                    core_mcr.set_runtime(
+                        stage="waiting_dependencies",
+                        progress=10,
+                        message="Waiting for dependent cases to complete",
+                        status="pending",
+                        meta={"dependency-case-id": id},
+                    )
                 is_ready = 0
                 break
 

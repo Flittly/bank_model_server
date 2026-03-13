@@ -70,7 +70,11 @@ def predict(
 def get_model_case_status(case_id: str) -> dict[str, Any]:
     if not model.ModelCaseReference.has_case(case_id):
         raise FileNotFoundError(f"Model Case ID ({case_id}) Not Found")
-    return {"status": model.ModelCaseReference.check_case_status(case_id)}
+    return {
+        "status": model.ModelCaseReference.check_case_status(case_id),
+        "runtime": model.ModelCaseReference.get_runtime_info(case_id),
+        "events": model.ModelCaseReference.get_case_events(case_id),
+    }
 
 
 def get_model_case_result(case_id: str) -> dict[str, Any]:
@@ -82,7 +86,11 @@ def get_model_case_result(case_id: str) -> dict[str, Any]:
 def get_model_case_error(case_id: str) -> dict[str, Any]:
     if not model.ModelCaseReference.has_case(case_id):
         raise FileNotFoundError(f"Model Case ID ({case_id}) Not Found")
-    return {"error": model.ModelCaseReference.get_simplified_error_log(case_id)}
+    return {
+        "error": model.ModelCaseReference.get_simplified_error_log(case_id),
+        "runtime": model.ModelCaseReference.get_runtime_info(case_id),
+        "events": model.ModelCaseReference.get_case_events(case_id),
+    }
 
 
 def get_pre_error_cases(case_id: str) -> dict[str, Any]:
@@ -233,9 +241,24 @@ def delete_resource_directory(directory: str) -> dict[str, Any]:
 
 
 def handle_model_runner(api: str, request_json: dict[str, Any]) -> dict[str, Any]:
-    return (
-        model.launcher.fetch_model_from_API(api).run(request_json).make_response() or {}
+    print(
+        f"[model-runner] incoming api={api} payload={request_json}",
+        flush=True,
     )
+    try:
+        mcr = model.launcher.fetch_model_from_API(api).run(request_json)
+        response = mcr.make_response() or {}
+        print(
+            f"[model-runner] accepted api={api} case_id={mcr.id} response_keys={list(response.keys())}",
+            flush=True,
+        )
+        return response
+    except Exception as exc:
+        print(
+            f"[model-runner] failed api={api} error={exc} payload={request_json}",
+            flush=True,
+        )
+        raise
 
 
 def run_task(task_id: str, timeout_seconds: int) -> dict[str, Any]:

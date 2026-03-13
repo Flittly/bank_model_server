@@ -2,6 +2,8 @@ import datetime
 import json
 import os
 import shutil
+import time
+import traceback
 from typing import Any
 
 import portalocker
@@ -11,6 +13,79 @@ import util
 
 
 class ModelCaseReference:
+    @staticmethod
+    def _case_lock_path(case_id: str) -> str:
+        return os.path.join(config.DIR_MODEL_CASE, case_id, "lock")
+
+    @staticmethod
+    def _read_json_file(
+        path: str, default: Any = None, tolerate_invalid: bool = False
+    ) -> Any:
+        if not os.path.exists(path):
+            return default
+
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                content = file.read().strip()
+        except OSError:
+            return default
+
+        if not content:
+            return default
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            if tolerate_invalid:
+                return default
+            raise
+
+    @staticmethod
+    def _write_json_atomic(path: str, payload: Any) -> None:
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        temp_path = f"{path}.tmp"
+
+        with open(temp_path, "w", encoding="utf-8") as file:
+            json.dump(payload, file, indent=4, ensure_ascii=False)
+            file.flush()
+            os.fsync(file.fileno())
+
+        last_error: PermissionError | None = None
+        for _ in range(5):
+            try:
+                os.replace(temp_path, path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.02)
+
+        if last_error is not None:
+            raise last_error
+
+    @staticmethod
+    def _read_case_json_with_lock(
+        case_id: str,
+        filename: str,
+        default: Any = None,
+        tolerate_invalid: bool = False,
+    ) -> Any:
+        path = os.path.join(config.DIR_MODEL_CASE, case_id, filename)
+        lock_path = ModelCaseReference._case_lock_path(case_id)
+        if not os.path.exists(lock_path):
+            return ModelCaseReference._read_json_file(
+                path, default=default, tolerate_invalid=tolerate_invalid
+            )
+
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            try:
+                return ModelCaseReference._read_json_file(
+                    path, default=default, tolerate_invalid=tolerate_invalid
+                )
+            finally:
+                portalocker.unlock(lock_file)
+
     def __init__(
         self,
         request_url: str,
@@ -95,11 +170,10 @@ class ModelCaseReference:
 
     @staticmethod
     def get_case_response(case_id: str) -> dict[str, Any] | None:
-        response_path = os.path.join(config.DIR_MODEL_CASE, case_id, "response.json")
-        if not os.path.exists(response_path):
-            return None
-        with open(response_path, "r", encoding="utf-8") as file:
-            return json.load(file)
+        response = ModelCaseReference._read_case_json_with_lock(
+            case_id, "response.json", default=None, tolerate_invalid=True
+        )
+        return response if isinstance(response, dict) else None
 
     @staticmethod
     def get_status_log(case_id: str) -> str | None:
@@ -111,6 +185,28 @@ class ModelCaseReference:
             return None
         with open(os.path.join(directory, filenames[0]), "r", encoding="utf-8") as file:
             return file.read().strip()
+
+    @staticmethod
+    def get_runtime_info(case_id: str) -> dict[str, Any] | None:
+        runtime = ModelCaseReference._read_case_json_with_lock(
+            case_id, "runtime.json", default=None, tolerate_invalid=True
+        )
+        return runtime if isinstance(runtime, dict) else None
+
+    @staticmethod
+    def get_case_events(case_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        events_path = os.path.join(config.DIR_MODEL_CASE, case_id, "events.log")
+        if not os.path.exists(events_path):
+            return []
+        with open(events_path, "r", encoding="utf-8") as file:
+            lines = [line.strip() for line in file.readlines() if line.strip()]
+        events = []
+        for line in lines[-limit:]:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                events.append({"level": "info", "message": line})
+        return events
 
     @staticmethod
     def get_simplified_error_log(case_id: str) -> str:
@@ -206,10 +302,16 @@ class ModelCaseReference:
                 encoding="utf-8",
             ) as file:
                 file.write("OK")
-
-            self.make_response({})
-            self.update_call_time()
             portalocker.unlock(lock_file)
+
+        self.make_response({})
+        self.set_runtime(
+            stage="initialized",
+            progress=0,
+            message="Case initialized",
+            status="pending",
+        )
+        self.update_call_time()
 
     def update_call_time(self) -> None:
         time_directory = os.path.join(self.directory, "time")
@@ -256,6 +358,81 @@ class ModelCaseReference:
             self.update_call_time()
             portalocker.unlock(lock_file)
 
+    def set_runtime(
+        self,
+        stage: str,
+        progress: int | None = None,
+        message: str | None = None,
+        status: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        runtime_path = os.path.join(self.directory, "runtime.json")
+        with open(self.local_file_locker, "a+", encoding="utf-8") as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+
+            loaded = ModelCaseReference._read_json_file(
+                runtime_path, default={}, tolerate_invalid=True
+            )
+            current: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+
+            current.update(
+                {
+                    "case-id": self.id,
+                    "model": self.model_name,
+                    "stage": stage,
+                    "updated-at": datetime.datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+            if progress is not None:
+                current["progress"] = progress
+            if message is not None:
+                current["message"] = message
+            if status is not None:
+                current["status"] = status
+            if meta is not None:
+                current["meta"] = meta
+
+            ModelCaseReference._write_json_atomic(runtime_path, current)
+            portalocker.unlock(lock_file)
+
+        return current
+
+    def append_event(
+        self,
+        level: str,
+        message: str,
+        stage: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        events_path = os.path.join(self.directory, "events.log")
+        event: dict[str, Any] = {
+            "time": datetime.datetime.now().isoformat(timespec="seconds"),
+            "level": level,
+            "message": message,
+        }
+        if stage is not None:
+            event["stage"] = stage
+        if meta is not None:
+            event["meta"] = meta
+
+        with open(events_path, "a", encoding="utf-8") as file:
+            file.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def mark_error(self, error: Exception) -> None:
+        error_text = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        )
+        self.set_runtime(
+            stage="error",
+            progress=100,
+            message=str(error),
+            status="error",
+            meta={"traceback": error_text},
+        )
+        self.append_event(
+            "error", str(error), stage="error", meta={"traceback": error_text}
+        )
+
     def find_status(self, status_flag: int) -> bool:
         return (self.get_status() & status_flag) != 0
 
@@ -268,25 +445,30 @@ class ModelCaseReference:
         self, content: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         response_path = os.path.join(self.directory, "response.json")
-        if content is None:
-            if not os.path.exists(response_path):
-                return None
-            with open(response_path, "r", encoding="utf-8") as file:
-                return json.load(file)
+        with open(self.local_file_locker, "a+", encoding="utf-8") as lock_file:
+            portalocker.lock(lock_file, portalocker.LOCK_EX)
+            try:
+                if content is None:
+                    response = ModelCaseReference._read_json_file(
+                        response_path, default=None, tolerate_invalid=True
+                    )
+                    return response if isinstance(response, dict) else None
 
-        current_response = {}
-        if os.path.exists(response_path):
-            with open(response_path, "r", encoding="utf-8") as file:
-                current_response = json.load(file)
+                current_response = {}
+                loaded = ModelCaseReference._read_json_file(
+                    response_path, default={}, tolerate_invalid=True
+                )
+                if isinstance(loaded, dict):
+                    current_response = loaded
 
-        current_response.update(content)
-        current_response["case-id"] = self.id
-        current_response["model"] = self.model_name
+                current_response.update(content)
+                current_response["case-id"] = self.id
+                current_response["model"] = self.model_name
 
-        with open(response_path, "w", encoding="utf-8") as file:
-            json.dump(current_response, file, indent=4)
-
-        return current_response
+                ModelCaseReference._write_json_atomic(response_path, current_response)
+                return current_response
+            finally:
+                portalocker.unlock(lock_file)
 
     def result_packaging(self) -> str:
         result_directory = os.path.join(self.directory, "result")

@@ -150,7 +150,7 @@ def run_task(task_id: str, timeout_seconds: int) -> dict[str, Any]:
     if not task:
         raise FileNotFoundError(f"Task ID ({task_id}) Not Found")
 
-    sections = db_ops.get_cross_sections(task_id_db=task["id"])
+    sections = db_ops.get_cross_sections(task_id=task_id)
     if not sections:
         raise ValueError(f"Task ID ({task_id}) has no cross sections")
 
@@ -167,20 +167,36 @@ def run_task(task_id: str, timeout_seconds: int) -> dict[str, Any]:
     failures: list[dict[str, str]] = []
 
     for section in sections:
+        section_id = str(section.get("section_id") or section.get("id") or "")
+        section_name = str(section.get("section_name") or "")
         try:
+            print(
+                f"[task-run] start task_id={task_id} section_id={section_id} section_name={section_name}",
+                flush=True,
+            )
             payload = _build_risk_payload(section)
+            print(
+                f"[task-run] payload task_id={task_id} section_id={section_id} payload={payload}",
+                flush=True,
+            )
             response = _execute_model(
                 config.API_MI_RISK_LEVEL, payload, timeout_seconds
             )
             result_id = _persist_section_result(task, section, response)
             persisted_result_ids.append(result_id)
+            print(
+                f"[task-run] completed task_id={task_id} section_id={section_id} result_id={result_id}",
+                flush=True,
+            )
         except Exception as exc:
+            print(
+                f"[task-run] failed task_id={task_id} section_id={section_id} error={exc}",
+                flush=True,
+            )
             failures.append(
                 {
-                    "section_id": str(
-                        section.get("section_id") or section.get("id") or ""
-                    ),
-                    "section_name": str(section.get("section_name") or ""),
+                    "section_id": section_id,
+                    "section_name": section_name,
                     "error": str(exc),
                 }
             )

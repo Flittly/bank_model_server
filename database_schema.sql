@@ -145,7 +145,7 @@ FOR EACH ROW EXECUTE FUNCTION update_basic_params_updated_at();
 -- ========================================
 CREATE TABLE IF NOT EXISTS cross_sections (
     id SERIAL PRIMARY KEY,
-    task_id INTEGER NOT NULL,
+    task_id VARCHAR(100) NOT NULL,
     section_id VARCHAR(100) UNIQUE NOT NULL,
     section_name VARCHAR(100) NOT NULL,
     bank_id VARCHAR(100) NOT NULL,
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS cross_sections (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
     FOREIGN KEY (basic_param_id) REFERENCES basic_params(id) ON DELETE SET NULL
 );
 

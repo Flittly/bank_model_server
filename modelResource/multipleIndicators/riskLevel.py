@@ -64,10 +64,14 @@ def get_mapped_tidal_level_and_mapped_water_qs(
     # map the input water_qs to node
     mapped_water_qs = 0
     i_water_qs = int(water_qs)
-    if i_water_qs < nodes[0]:
+    if len(nodes) == 1:
         mapped_water_qs = nodes[0]
-    elif i_water_qs > nodes[-1]:
+    elif i_water_qs <= nodes[0]:
+        mapped_water_qs = nodes[0]
+    elif i_water_qs >= nodes[-1]:
         mapped_water_qs = nodes[-1]
+    elif i_water_qs in nodes:
+        mapped_water_qs = i_water_qs
     else:
         middles = [
             (nodes[i] + (nodes[i + 1] - nodes[i]) / 2 - 1)

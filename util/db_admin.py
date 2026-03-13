@@ -47,6 +47,24 @@ BEGIN
             ADD CONSTRAINT bank_risk_results_section_id_fkey
             FOREIGN KEY (section_id) REFERENCES cross_sections(section_id) ON DELETE CASCADE;
     END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cross_sections'
+          AND column_name = 'task_id'
+          AND data_type <> 'character varying'
+    ) THEN
+        ALTER TABLE cross_sections DROP CONSTRAINT IF EXISTS cross_sections_task_id_fkey;
+        ALTER TABLE cross_sections ALTER COLUMN task_id TYPE VARCHAR(100) USING task_id::text;
+        UPDATE cross_sections cs
+        SET task_id = t.task_id
+        FROM tasks t
+        WHERE cs.task_id = t.id::text;
+        ALTER TABLE cross_sections
+            ADD CONSTRAINT cross_sections_task_id_fkey
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE;
+    END IF;
 END $$;
 
 ALTER TABLE hydrodynamic_points
